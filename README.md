@@ -278,108 +278,51 @@ An audit log of every generated draft.
 
 ### Stage 1: Topic Queue Management
 
-**Nodes:** `Get row(s) in sheet` → `Find Pending` → `IF Pending Found?`
-
-The workflow reads all rows from the `Studio_Legale_Pasian_Topics` sheet and searches for the first row where `Status` equals "Pending." If none are found, it reads all "Done" rows and resets their status back to "Pending," creating an infinite recycling loop. This ensures continuous operation without manual topic replenishment.
-
-**Output:** A single pending topic with its row number and metadata.
+- Reads the Google Sheet topic queue for the next `Pending` item
+- Automatically recycles completed topics when the queue is empty, ensuring the pipeline never runs dry
+- Each topic flows through the system one at a time per scheduled run
 
 ### Stage 2: Keyword Research & Selection
 
-**Nodes:** `SEOZoom - Fetch Keyword Metrics` → `SEOZoom OK?` → `Code in JavaScript` → `Select Best Legal Keyword1`
+- Sends the topic to SEOZoom to fetch related keywords with volume, difficulty, and opportunity scores
+- Scores and ranks each keyword to identify the best SEO target
+- The highest-ranked keyword advances to content generation
 
-The topic is sent to the SEOZoom API to fetch up to 20 related keywords with metrics (search volume, KD, KO, search intent). The response is parsed from JSON and if no valid data is returned, an error notification is sent and the workflow terminates.
+### Stage 3: AI Content Generation
 
-A scoring algorithm evaluates each keyword, favoring high-opportunity, low-difficulty keywords with significant search volume. Transactional and commercial intent keywords receive bonus scores.
+- Fetches existing WordPress posts for internal linking context
+- Sends the selected keyword, SEO data, and existing articles to GPT-4.1
+- Generates a complete Italian legal article with title, HTML content, FAQ section, SEO metadata, and image prompt
 
-**Output:** The selected keyword with volume, difficulty, opportunity, intent, and score.
+### Stage 4: Validation & Quality Review
 
-### Stage 3: Content Generation
+- Validates the generated article against strict requirements: word count, H2 count, FAQ count, and SEO field lengths
+- Passes the article to GPT-5.1 for a senior-editor-level quality assessment
+- Articles scoring 6/10 or higher are auto-approved; failed articles trigger admin notification
 
-**Nodes:** `WordPress - Get Existing Posts` → `Prepare Internal Links Context` → `Code in JavaScript1` → `Basic LLM Chain` (with `OpenAI Chat Model`)
+### Stage 5: Content Finalization
 
-Existing published posts are fetched from WordPress. Their titles and links are formatted into a text block that the AI can reference for internal linking suggestions.
+- Appends a standardized Italian legal disclaimer to the article
+- Injects FAQ schema.org JSON-LD markup for rich search results
+- Prepares the complete HTML payload for WordPress
 
-The LangChain LLM node sends a detailed prompt to OpenAI GPT-4.1 (with `json_object` response format) that includes the selected keyword, SEO metrics, existing articles context, and strict content requirements. The AI generates a complete Italian legal article as structured JSON.
+### Stage 6: Image Generation & Upload
 
-**Output:** Raw JSON response from OpenAI containing title, meta fields, HTML content, FAQ array, and metadata.
+- Generates an infographic-style featured image via GPT-Image-1 with legal-themed visuals and text overlay
+- Uploads the image to the WordPress media library
+- If generation or upload fails, the pipeline continues without a featured image
 
-### Stage 4: Content Validation
+### Stage 7: WordPress Draft Creation
 
-**Nodes:** `Edit Fields` → `OpenAI Article OK?` → `Parse & Validate Article`
+- Builds the WordPress post with full Yoast and Rank Math SEO metadata
+- Creates a draft post via the WordPress REST API (status is always `draft` — never published automatically)
+- Verifies the draft status as a safety check before proceeding
 
-The response is checked for existence. The raw JSON is extracted, stripped of markdown fences, and parsed. Field names are normalized (supporting both `article_html` and `article_content` conventions). If no H1 is provided, it is extracted from the content HTML.
+### Stage 8: Logging & Notification
 
-Six validations are performed:
-
-- Required fields must all be present
-- Word count must meet the minimum threshold
-- H2 section count must meet the minimum threshold
-- FAQ count must meet the minimum threshold
-- Meta title must not exceed character limit
-- Meta description must not exceed character limit
-
-If validation fails, the error is logged to Google Sheets and the admin is notified.
-
-**Output:** A validated, normalized article object with all required fields.
-
-### Stage 5: AI Quality Review
-
-**Nodes:** `OpenAI - AI Quality Review1` (with `OpenAI Chat Model1`) → `Process QA Review Result`
-
-The article is sent to a second OpenAI model (GPT-5.1) acting as a senior legal editor. The review prompt includes the article title, target keyword, word count, H2/FAQ counts, meta data, SEO warnings, and the first 6000 characters of content.
-
-The AI evaluates content quality, SEO optimization, structure, CTA presence, legal tone, and publication readiness. Results are returned as structured JSON.
-
-The `Process QA Review Result` node extracts the review, handles API errors gracefully (auto-approving if the QA call fails), and auto-approves articles with a score of 6/10 or higher.
-
-**Output:** The article enriched with QA metadata (score, issues, improvements, approval status).
-
-### Stage 6: Content Finalization
-
-**Nodes:** `Append Disclaimer + Build Final Content`
-
-A standard Italian legal disclaimer HTML block is appended to the article content (unless one already exists). FAQ schema.org JSON-LD markup is generated from the FAQ array for rich search results. QA reviewer notes are embedded as HTML comments. H2 headings are extracted and counted for final validation.
-
-**Output:** Complete `final_content` with disclaimer, FAQ schema, and QA notes.
-
-### Stage 7: Image Generation
-
-**Nodes:** `Generate an image` → `Image Generated OK?`
-
-The `image_prompt` generated during content creation is sent to OpenAI GPT-Image-1. The prompt specifies an infographic-style image with Italian text overlay, legal icons, and topic-specific visual elements.
-
-If the image is generated successfully (binary data exists), it proceeds to upload. If generation fails, the workflow continues without a featured image.
-
-**Output:** Binary image data (success) or null (fallback).
-
-### Stage 8: Image Upload
-
-**Nodes:** `WordPress - Upload Image` → `Set Image ID - Success` / `Set Image ID - No Image`
-
-The image is uploaded to the WordPress media library via the REST API with Basic Auth. On success, the media ID and URL are extracted. On failure, default null values are set with a skip reason.
-
-**Output:** Article data enriched with `featured_image_id` and `featured_image_url`.
-
-### Stage 9: WordPress Draft Creation
-
-**Nodes:** `Build WordPress Post Body1` → `WordPress - Create Draft` → `Draft Created OK?`
-
-The WordPress post body is constructed with the article title, content, slug (sanitized and transliterated), excerpt, and comprehensive SEO metadata for both Yoast and Rank Math plugins. The post status is hardcoded to `draft` — never `publish`.
-
-The post is sent to WordPress via REST API with Basic Auth. A critical safety check verifies the returned status is `draft` and throws an error if any other status is returned.
-
-**Output:** WordPress post ID, edit URL, preview URL, and draft status.
-
-### Stage 10: Logging & Notification
-
-**Nodes:** `Extract Draft Details` → `Sheets - Log Draft` → `Sheets - Log Used Keyword` → `Send Success Notification`
-
-The draft details are logged to the `Draft_Logs` sheet with all relevant metadata. The topic's status is updated to "Done" with the current timestamp in the `Studio_Legale_Pasian_Topics` sheet.
-
-A success email is sent to the admin containing the article title, keyword, word count, quality score, image status, and a direct link to edit the draft in WordPress.
-
-**Output:** Completed workflow with full audit trail.
+- Logs the draft details (keyword, title, word count, quality score, edit link) to Google Sheets
+- Marks the topic as `Done` in the queue with a timestamp
+- Sends a success email to the admin with the draft preview link and key metrics
 
 ---
 
