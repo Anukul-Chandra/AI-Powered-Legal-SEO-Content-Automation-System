@@ -1,6 +1,20 @@
 # 🚀 AI-Powered Legal SEO Content Automation System
 
 <p align="center">
+  <img src="https://img.shields.io/badge/n8n-%23000000.svg?style=for-the-badge&logo=n8n&logoColor=green" alt="n8n"/>
+  <img src="https://img.shields.io/badge/OpenAI%20GPT--4.1-%23412991.svg?style=for-the-badge&logo=openai&logoColor=white" alt="OpenAI GPT-4.1"/>
+  <img src="https://img.shields.io/badge/OpenAI%20GPT--5.1-%23412991.svg?style=for-the-badge&logo=openai&logoColor=white" alt="OpenAI GPT-5.1"/>
+  <img src="https://img.shields.io/badge/GPT%20Image%201-%23412991.svg?style=for-the-badge&logo=openai&logoColor=white" alt="GPT Image 1"/>
+  <img src="https://img.shields.io/badge/SEOZoom%20API-%23FF6F00.svg?style=for-the-badge&logo=data:image/svg%2bxml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHdpZHRoPSI2NCIgaGVpZ2h0PSI2NCIgZmlsbD0ibm9uZSI+PHBhdGggZD0iTTMyIDBjMTcuNjczIDAgMzIgMTQuMzI3IDMyIDMycy0xNC4zMjcgMzItMzIgMzJTMCA0OS42NzMgMCAzMiAxNC4zMjcgMCAzMiAweiIgZmlsbD0iI2ZmZiIvPjwvc3ZnPg==&logoColor=white" alt="SEOZoom API"/>
+  <img src="https://img.shields.io/badge/WordPress-%2321759B.svg?style=for-the-badge&logo=wordpress&logoColor=white" alt="WordPress"/>
+  <img src="https://img.shields.io/badge/Google%20Sheets-%2334A853.svg?style=for-the-badge&logo=googlesheets&logoColor=white" alt="Google Sheets"/>
+  <img src="https://img.shields.io/badge/Gmail-%23EA4335.svg?style=for-the-badge&logo=gmail&logoColor=white" alt="Gmail"/>
+  <img src="https://img.shields.io/badge/JavaScript-%23F7DF1E.svg?style=for-the-badge&logo=javascript&logoColor=black" alt="JavaScript"/>
+  <img src="https://img.shields.io/badge/REST%20API-%23000000.svg?style=for-the-badge&logo=fastapi&logoColor=white" alt="REST API"/>
+  <img src="https://img.shields.io/badge/AI%20Automation-%2300C853.svg?style=for-the-badge&logo=robotframework&logoColor=white" alt="AI Automation"/>
+</p>
+
+<p align="center">
   <img src="assets/banner.png" alt="AI-Powered Legal SEO Content Automation System" width="100%">
 </p>
 
