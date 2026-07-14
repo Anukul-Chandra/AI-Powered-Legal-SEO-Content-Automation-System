@@ -324,27 +324,7 @@ An audit log of every generated draft.
 - Marks the topic as `Done` in the queue with a timestamp
 - Sends a success email to the admin with the draft preview link and key metrics
 
----
 
-## 🛡 Validation & Quality Assurance
-
-| Check | Location | Description |
-|---|---|---|
-| SEOZoom Response Validation | `Code in JavaScript` | Verifies response array exists before processing |
-| Zero Volume Keyword Filter | `Select Best Legal Keyword1` | Removes keywords with zero search volume |
-| OpenAI Response Existence | `OpenAI Article OK?` | Ensures text content was generated |
-| JSON Parse Validation | `Parse & Validate Article` | Strips fences, parses with fallback regex extraction |
-| Required Field Validation | `Parse & Validate Article` | Checks title, meta_title, meta_description, slug, article_content, faq |
-| Word Count Minimum | `Parse & Validate Article` | Enforces configurable minimum word count |
-| H2 Section Count | `Parse & Validate Article` | Enforces minimum H2 sections |
-| FAQ Count | `Parse & Validate Article` | Enforces minimum FAQ items |
-| Meta Title Length | `Parse & Validate Article` | Enforces maximum character limit |
-| Meta Description Length | `Parse & Validate Article` | Enforces maximum character limit |
-| AI Quality Review | `Process QA Review Result` | GPT-5.1 evaluates content quality (auto-approve ≥ 6/10) |
-| QA API Failure Fallback | `Process QA Review Result` | Auto-approves if QA API is unreachable |
-| WordPress Draft Safety Check | `Extract Draft Details` | Verifies status is `draft` — throws error on mismatch |
-
----
 
 ## 🤖 AI Components
 
