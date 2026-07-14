@@ -20,17 +20,17 @@
 
 ## Overview
 
-This n8n automation system generates daily SEO-optimized legal articles for Italian law firm websites. It reads pending topics from a Google Sheet, performs keyword research via SEOZoom, generates full-length Italian legal content using OpenAI (GPT-4.1), runs an AI quality review (GPT-5.1), creates a featured image (GPT-Image-1), and publishes a draft post to WordPress — all without human intervention.
+An Italian law firm needed to publish one SEO-optimised legal article every day on their website. Their team was managing everything manually — researching legal keywords through multiple tools, writing long-form content, creating featured images, formatting WordPress posts, and reviewing each article before publication. They wanted a system that could handle the entire production pipeline automatically while still keeping a lawyer in the loop for final review.
 
-The workflow runs automatically every morning at 08:00 AM Rome time, handles its own topic queue, logs every result to Google Sheets, and sends email notifications on both success and failure.
+This project delivers exactly that. It is an end-to-end n8n automation workflow that reads content topics from a Google Sheet, researches and selects the best legal keyword via SEOZoom, generates a complete Italian legal article using OpenAI GPT-4.1, runs an AI quality review with GPT-5.1, creates a featured image with GPT-Image-1, and posts a draft to WordPress — all on a daily schedule with zero manual effort. Every step is logged, and the system sends email notifications on both success and failure.
 
 ---
 
 ## 🎯 Business Problem
 
-Law firms need consistent, high-quality, SEO-optimized content to rank in local search results. Manual content creation is slow, expensive, and hard to scale. Managing topic queues, keyword research, SEO optimization, internal linking, and WordPress publishing across dozens of articles requires significant editorial overhead.
+The client wanted to publish one high-quality legal article every day, but the entire process was manual. Each article required finding SEO opportunities, researching keyword metrics, analysing search intent, planning article structure, writing long-form legal content, crafting SEO metadata, creating a featured image, uploading everything into WordPress, and reviewing the draft before it could go live.
 
-This system replaces that entire process with a fully automated pipeline — from topic selection through keyword research, AI content generation, quality assurance, image creation, and draft publishing.
+This workflow consumed hours per article, required switching between half a dozen platforms, and made it difficult to maintain a consistent daily publishing schedule. The client needed a reliable automated system that could handle the heavy lifting of research, writing, image creation, and WordPress preparation — while still allowing their legal team to review every article before it was published. This project was built to solve exactly those business challenges through intelligent workflow automation.
 
 ---
 
