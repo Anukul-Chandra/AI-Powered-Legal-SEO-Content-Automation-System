@@ -300,20 +300,7 @@ Acts as a senior legal content editor. Reviews content quality, SEO optimization
 
 Generates infographic-style legal images based on AI-generated prompts. The prompt includes text overlays, legal icons (scales of justice, gavel, documents), topic-specific visual elements, and composition instructions.
 
----
 
-## 🖼 Image Generation
-
-The system generates a featured image for every article using OpenAI GPT-Image-1. The image prompt is created during content generation and specifies:
-
-- A bold short Italian headline text overlay (2–5 words)
-- 2–3 relevant icons/symbols (scales of justice, gavel, legal documents, plus topic-specific icons)
-- Infographic-style layout
-- Brand colors and professional aesthetic
-
-If image generation succeeds, it is uploaded to WordPress and set as the post's featured image. If generation or upload fails, the draft is created without an image and the admin is notified in the success email.
-
----
 
 ## 🌐 WordPress Automation
 
