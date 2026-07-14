@@ -411,24 +411,7 @@ If image generation succeeds, it is uploaded to WordPress and set as the post's 
 - **Safe by design** — articles are always drafts, never published automatically
 - **Resilient** — individual failures (image, API, network) do not block the pipeline
 
----
 
-## 📂 Repository Structure
-
-```
-AI-Powered-Legal-SEO-Content-Automation-System/
-│
-├── README.md
-├── AI-Powered_Legal_SEO_Content_Automation_System_.json
-│
-├── docs/
-│   └── configuration-guide.md
-│
-└── assets/
-    └── banner.png
-```
-
----
 
 ## 🚀 Installation
 
