@@ -15,7 +15,7 @@
 </p>
 
 <p align="center">
-  <img src="assets/banner.png" alt="AI-Powered Legal SEO Content Automation System" width="100%">
+  <img src="https://github.com/user-attachments/assets/54463288-2c6a-4d6d-9d2e-6d6c4147ae69" alt="Banner" width="100%">
 </p>
 
 ## Overview
