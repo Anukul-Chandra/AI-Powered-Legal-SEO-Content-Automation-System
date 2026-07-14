@@ -489,54 +489,7 @@ If image generation succeeds, it is uploaded to WordPress and set as the post's 
 | WordPress | HTTP Basic Auth | Draft creation, media upload |
 | Gmail | OAuth2 | Success/failure notifications |
 
----
 
-## 🔮 Future Improvements
-
-- **Automatic publishing schedule** — Optional flag to auto-publish drafts after a configurable review period
-- **Multi-language support** — Extend beyond Italian to additional jurisdictions
-- **Competitor content analysis** — SEOZoom competitive data to identify content gaps
-- **Slack/Teams notifications** — Additional notification channels beyond email
-- **Analytics dashboard** — Track content performance metrics post-publication
-- **Batch processing** — Process multiple pending topics per trigger instead of one
-- **Content calendar integration** — Sync with Google Calendar for scheduled publishing dates
-- **Category and tag assignment** — Auto-categorize posts based on practice area mapping
-
----
-
-## 📸 Workflow Screenshots
-
-<details>
-<summary>Complete Workflow</summary>
-<br>
-<img src="assets/screenshots/complete-workflow.png" alt="Complete Workflow" width="800"/>
-</details>
-
-<details>
-<summary>Google Sheets - Topic Queue</summary>
-<br>
-<img src="assets/screenshots/google-sheets-topics.png" alt="Google Sheets Topic Queue" width="800"/>
-</details>
-
-<details>
-<summary>Google Sheets - Draft Logs</summary>
-<br>
-<img src="assets/screenshots/google-sheets-drafts.png" alt="Google Sheets Draft Logs" width="800"/>
-</details>
-
-<details>
-<summary>WordPress Draft</summary>
-<br>
-<img src="assets/screenshots/wordpress-draft.png" alt="WordPress Draft" width="800"/>
-</details>
-
-<details>
-<summary>AI Quality Review</summary>
-<br>
-<img src="assets/screenshots/ai-quality-review.png" alt="AI Quality Review Output" width="800"/>
-</details>
-
----
 
 ## 👨‍💻 Author
 
