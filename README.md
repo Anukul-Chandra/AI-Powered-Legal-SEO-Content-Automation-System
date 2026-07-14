@@ -36,43 +36,43 @@ This system replaces that entire process with a fully automated pipeline — fro
 
 ## ⚡ Core Features
 
-### Automated Topic Processing
+### ➡️ Automated Topic Processing
 Manages a self-replenishing content queue via Google Sheets. Topics marked as `Pending` are processed in sequence; once all topics are completed, the queue automatically recycles to ensure uninterrupted operation without manual intervention.
 
-### SEOZoom Keyword Research
+### ➡️ SEOZoom Keyword Research
 Submits each topic to the SEOZoom API to retrieve related keywords along with search volume, keyword difficulty (KD), and keyword opportunity (KO) metrics. Responses are validated before proceeding downstream.
 
-### AI Keyword Selection
+### ➡️ AI Keyword Selection
 Evaluates every keyword using a weighted scoring model that prioritises high-opportunity, low-difficulty terms. Transactional and commercial intent keywords receive additional score bonuses to ensure the most strategically valuable term is selected.
 
-### Existing Content Analysis
+### ➡️ Existing Content Analysis
 Pulls published WordPress posts to build an internal linking context, enabling the AI to reference relevant existing content naturally and avoid duplication.
 
-### AI Content Generation
+### ➡️ AI Content Generation
 Leverages OpenAI GPT-4.1 to produce a complete Italian legal article in a single pass — including H1 title, structured H2 sections, FAQ content, SEO metadata, an image prompt, and internal link suggestions — all returned as structured JSON.
 
-### Content Validation
+### ➡️ Content Validation
 Every generated article is checked against configurable thresholds for word count, H2 section count, FAQ count, meta title length, and meta description length. Invalid articles are logged and flagged for review.
 
-### AI Quality Review
+### ➡️ AI Quality Review
 A second model (GPT-5.1) performs a senior-editor-level audit of content quality, legal accuracy, SEO optimisation, and structural completeness. Articles scoring 6/10 or higher are automatically approved.
 
-### Legal Disclaimer & Schema Injection
+### ➡️ Legal Disclaimer & Schema Injection
 Appends a standardised Italian legal disclaimer to every article and injects FAQ schema.org JSON-LD markup to enhance search-result visibility.
 
-### AI Featured Image Generation
+### ➡️ AI Featured Image Generation
 Generates an infographic-style featured image via GPT-Image-1, incorporating topic-specific legal icons, text overlays, and brand-consistent composition.
 
-### WordPress Draft Publishing
+### ➡️ WordPress Draft Publishing
 Creates a draft post (never published automatically) with complete Yoast and Rank Math SEO metadata, slug, excerpt, optional featured image, and internal review annotations. A built-in safety check verifies the draft status before proceeding.
 
-### Audit Logging
+### ➡️ Audit Logging
 Records every generated draft in a Google Sheet (keyword, title, word count, quality score, edit link) and updates the topic queue with a completion timestamp, providing a full audit trail.
 
-### Email Notifications
+### ➡️ Email Notifications
 Sends targeted Gmail alerts for three scenarios: successful draft creation (with edit link), SEOZoom API failures, and WordPress draft failures — each with relevant context for rapid resolution.
 
-### Error Resilience
+### ➡️ Error Resilience
 Non-blocking error handling across all external integrations. Failures in image generation, content retrieval, or API calls do not halt the pipeline; the system degrades gracefully and continues processing.
 
 ---
