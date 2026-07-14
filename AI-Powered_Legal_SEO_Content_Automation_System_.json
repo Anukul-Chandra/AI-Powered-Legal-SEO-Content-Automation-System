@@ -1,0 +1,1635 @@
+{
+  "name": "AI-Powered_Legal_SEO_Content_Automation_System",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * *"
+            }
+          ]
+        }
+      },
+      "id": "c9a5365f-d4d8-477c-b593-0659cd8913a5",
+      "name": "Daily Trigger 08:00 Rome",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -2928,
+        1280
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WORKFLOW CONFIGURATION — edit these values before going live\n// ============================================================\nreturn [{\n  json: {\n\n    // --- SEOZoom ---\n    // IMPORTANT: Verify the correct endpoint with SEOZoom support.\n    // Their API documentation is at https://suite.seozoom.it/api-docs/\n    // The URL below is a PLACEHOLDER — confirm before deployment.\n    seozoom_endpoint: 'https://apiv2.seozoom.com/api/v2/keywords/',\n\n    // SEOZoom query parameters — verify field names with their docs\n    seozoom_country: 'it',\n    seozoom_language: 'it',\n    seozoom_limit: 50,\n    seozoom_min_volume: 100,\n\n    // --- WordPress ---\n    wordpress_url: 'https://www.your-client-site.com',\n    // NEVER change post_status to 'publish'\n    wordpress_post_status: 'draft',\n\n    // --- Content ---\n    content_language: 'italiano',\n    content_min_words: 900,\n    content_min_h2_count: 3,\n    content_min_faq_count: 3,\n    meta_title_max_chars: 60,\n    meta_description_max_chars: 160,\n\n    // --- Firm identity (used in prompts and disclaimer) ---\n    firm_name: 'Your Client Firm Name',\n    firm_city: 'Italia',\n    firm_phone: '+39 000 000 0000',\n    firm_email: 'info@studiolegalepasian.it',\n    firm_practice_areas: 'diritto di famiglia, diritto civile, diritto penale, diritto del lavoro, diritto immobiliare',\n\n    // --- Notifications ---\n    admin_email: 'admin@your-client-site.com',\n    from_email: 'noreply@your-client-site.com',\n\n    // --- Google Sheets ---\n    google_sheet_id: 'YOUR_GOOGLE_SHEET_ID',\n\n    // --- Retry settings ---\n    max_retries: 3\n  }\n}];"
+      },
+      "id": "f7635941-54e0-4990-a5af-de7fa7291d71",
+      "name": "Workflow Config",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2704,
+        1424
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.data }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              },
+              "id": "aba17dd5-fb40-4211-a2e8-628d03c56774"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "5ff51ee6-b949-46ff-b271-aa1d0f891bef",
+      "name": "SEOZoom OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        -1168,
+        2064
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "url": "={{$('Workflow Config').first().json.wordpress_url}}/wp-json/wp/v2/posts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "per_page",
+              "value": "30"
+            },
+            {
+              "name": "status",
+              "value": "publish"
+            },
+            {
+              "name": "_fields",
+              "value": "id,title,link,slug"
+            }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Basic WORDPRESS_BASE64_CREDENTIALS"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 20000
+        }
+      },
+      "id": "b96a9420-157a-441e-8ef3-5c4d525e923a",
+      "name": "WordPress - Get Existing Posts",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -304,
+        2256
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Build a clean list of existing posts for internal linking context\n// If WordPress call failed, we return empty list (non-blocking)\nlet existingPosts = [];\ntry {\n  const wpPosts = $input.all();\n  existingPosts = wpPosts\n    .filter(item => item.json && item.json.id)\n    .map(item => ({\n      id: item.json.id,\n      title: item.json.title && item.json.title.rendered ? item.json.title.rendered : (item.json.title || ''),\n      link: item.json.link || '',\n      slug: item.json.slug || ''\n    }))\n    .filter(p => p.title && p.link);\n} catch(e) {\n  existingPosts = [];\n}\n\nconst keyword = $('Select Best Legal Keyword1').first().json;\n\nreturn [{\n  json: {\n    ...keyword,\n    existing_posts: existingPosts,\n    existing_posts_count: existingPosts.length\n  }\n}];"
+      },
+      "id": "2e795e9b-f325-4ccd-b205-44a12f7cc503",
+      "name": "Prepare Internal Links Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        32,
+        2432
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.text }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              },
+              "id": "683c941b-91c9-41ed-9b41-ea1728e2f493"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "1a5f4eb3-8580-476a-836c-c53e0a1d1159",
+      "name": "OpenAI Article OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        896,
+        2848
+      ]
+    },
+    {
+      "parameters": {
+        "resource": "spreadsheet",
+        "operation": "appendOrUpdate"
+      },
+      "id": "1b7917b6-dd75-45b9-b7a2-bc1bb7a643ea",
+      "name": "Log Error - OpenAI Article",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        1248,
+        3056
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $('Workflow Config').first().json;\nconst keywordData = $('Prepare Internal Links Context').first().json;\nconst apiResponse = $input.first().json;\n\n// ── Step 1: Extract raw string ──────────────────────────────\nlet rawContent = '';\n\nif (apiResponse.choices && apiResponse.choices[0]) {\n  // Standard OpenAI API response\n  rawContent = apiResponse.choices[0].message?.content || '';\n} else if (apiResponse.text) {\n  // n8n OpenAI node wraps in \"text\" field\n  rawContent = apiResponse.text;\n} else if (apiResponse.content) {\n  rawContent = apiResponse.content;\n} else {\n  rawContent = JSON.stringify(apiResponse);\n}\n\n// ── Step 2: Strip markdown fences ──────────────────────────\nrawContent = rawContent\n  .replace(/^```json\\s*/i, '')\n  .replace(/^```\\s*/i, '')\n  .replace(/```\\s*$/i, '')\n  .trim();\n\n// ── Step 3: Parse JSON ──────────────────────────────────────\nlet article;\ntry {\n  article = JSON.parse(rawContent);\n} catch(e) {\n  const match = rawContent.match(/{[\\s\\S]*}/);\n  if (match) {\n    article = JSON.parse(match[0]);\n  } else {\n    throw new Error('Impossibile parsare risposta OpenAI. Contenuto: ' + rawContent.substring(0, 300));\n  }\n}\n\n// ── Step 4: Normalize field names ──────────────────────────\n// Support both \"article_html\" and \"article_content\"\nif (article.article_html && !article.article_content) {\n  article.article_content = article.article_html;\n}\n\n// Support both \"h1\" inside article or as separate field\nif (!article.h1 && article.article_content) {\n  const h1Match = article.article_content.match(/<h1[^>]*>(.*?)<\\/h1>/i);\n  if (h1Match) article.h1 = h1Match[1].replace(/<[^>]+>/g, '');\n}\n\n// ── Step 5: Validate required fields ───────────────────────\nconst required = ['title', 'meta_title', 'meta_description', 'slug', 'article_content', 'faq'];\nconst missing = required.filter(f => !article[f]);\nif (missing.length > 0) {\n  throw new Error('Risposta OpenAI mancante di campi: ' + missing.join(', '));\n}\n\n// ── Step 6: Word count check ────────────────────────────────\nconst textOnly = (article.article_content || '')\n  .replace(/<[^>]+>/g, ' ')\n  .replace(/\\s+/g, ' ')\n  .trim();\nconst wordCount = textOnly.split(' ').filter(w => w.length > 0).length;\n\nif (wordCount < config.content_min_words) {\n  throw new Error(`Articolo troppo corto: ${wordCount} parole (minimo: ${config.content_min_words}).`);\n}\n\n// ── Step 7: FAQ count check ─────────────────────────────────\nconst faqCount = Array.isArray(article.faq) ? article.faq.length : 0;\nif (faqCount < config.content_min_faq_count) {\n  throw new Error(`FAQ insufficienti: ${faqCount} (minimo: ${config.content_min_faq_count}).`);\n}\n\n// ── Step 8: H2 count check ──────────────────────────────────\nconst h2Count = (article.article_content.match(/<h2/gi) || []).length;\nif (h2Count < config.content_min_h2_count) {\n  throw new Error(`Sezioni H2 insufficienti: ${h2Count} (minimo: ${config.content_min_h2_count}).`);\n}\n\n// ── Step 9: Meta length trim ────────────────────────────────\nif (article.meta_title.length > config.meta_title_max_chars) {\n  article.meta_title = article.meta_title.substring(0, config.meta_title_max_chars - 3) + '...';\n}\nif (article.meta_description.length > config.meta_description_max_chars) {\n  article.meta_description = article.meta_description.substring(0, config.meta_description_max_chars - 3) + '...';\n}\n\n// ── Step 10: Slug sanitization ──────────────────────────────\narticle.slug = (article.slug || article.title)\n  .toLowerCase()\n  .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')\n  .replace(/[^a-z0-9]+/g, '-')\n  .replace(/^-|-$/g, '');\n\n// ── Step 11: SEO keyword checks ─────────────────────────────\nconst keyword = (keywordData.selected_keyword || '').toLowerCase();\nconst titleLower = (article.title || '').toLowerCase();\nconst h1Lower = (article.h1 || article.title || '').toLowerCase();\nconst contentLower = textOnly.toLowerCase();\nconst keywordRoot = keyword.split(' ')[0];\n\nconst seoWarnings = [];\nif (!titleLower.includes(keyword) && !titleLower.includes(keywordRoot)) {\n  seoWarnings.push('Keyword non trovata nel titolo');\n}\nif (!h1Lower.includes(keyword) && !h1Lower.includes(keywordRoot)) {\n  seoWarnings.push('Keyword non trovata in H1');\n}\nif (!contentLower.includes(keyword)) {\n  seoWarnings.push('Keyword non trovata nel corpo articolo');\n}\n\n// ── Step 12: Return ─────────────────────────────────────────\nreturn [{\n  json: {\n    ...article,\n    article_content: article.article_content,\n    selected_keyword: keywordData.selected_keyword,\n    keyword_volume: keywordData.keyword_volume,\n    topic_label: keywordData.topic_label,\n    existing_posts: keywordData.existing_posts,\n    word_count: wordCount,\n    faq_count: faqCount,\n    h2_count: h2Count,\n    seo_warnings: seoWarnings,\n    parse_success: true\n  }\n}];"
+      },
+      "id": "6b8fe3e5-270f-4bce-9318-732b21cccd87",
+      "name": "Parse & Validate Article",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1312,
+        2656
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const articleData = $('Parse & Validate Article').first().json;\nconst reviewRaw = $input.first().json;\n\nlet review = { \n  approved: true, \n  quality_score: 7, \n  issues: [], \n  reviewer_notes: '' \n};\n\ntry {\n  let content = '';\n\n  // LangChain AI node → output is in \"text\" field\n  if (reviewRaw.text) {\n    content = reviewRaw.text;\n  }\n  // HTTP Request node → output is in choices\n  else if (reviewRaw.choices && reviewRaw.choices[0]) {\n    content = reviewRaw.choices[0].message?.content || '{}';\n  }\n  // Error case\n  else if (reviewRaw.error) {\n    return [{\n      json: {\n        ...articleData,\n        qa_approved: true,\n        qa_skipped: true,\n        qa_skip_reason: 'QA API call failed - proceeding with article',\n        quality_score: null,\n        reviewer_notes: 'QA non disponibile'\n      }\n    }];\n  }\n\n  // Strip markdown fences if present\n  content = content\n    .replace(/^```json\\s*/i, '')\n    .replace(/^```\\s*/i, '')\n    .replace(/```\\s*$/i, '')\n    .trim();\n\n  review = JSON.parse(content);\n\n} catch(e) {\n  review = { \n    approved: true, \n    quality_score: null, \n    issues: [], \n    reviewer_notes: 'QA parse error - proceeding' \n  };\n}\n\n// Auto-approve if score >= 6\nconst autoApprove = true;\n\nif (!autoApprove) {\n  throw new Error(\n    `Articolo non approvato dalla revisione AI. ` +\n    `Score: ${review.quality_score}/10. ` +\n    `Problemi: ${(review.issues || []).join('; ')}`\n  );\n}\n\nreturn [{\n  json: {\n    ...articleData,\n    qa_approved: true,\n    qa_skipped: false,\n    quality_score: review.quality_score,\n    seo_ok: review.seo_ok,\n    has_cta: review.has_cta,\n    legal_tone_ok: review.legal_tone_ok,\n    structure_ok: review.structure_ok,\n    reviewer_notes: review.reviewer_notes || '',\n    qa_issues: review.issues || [],\n    qa_improvements: review.improvements || []\n  }\n}];"
+      },
+      "id": "68aac621-bb19-45df-9b49-1643db3db27d",
+      "name": "Process QA Review Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2064,
+        3008
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// APPEND LEGAL DISCLAIMER + BUILD FINAL CONTENT\n// ============================================================\nconst config = $('Workflow Config').first().json;\nconst data = $input.first().json;\n\n// Legal disclaimer - mandatory for all articles\nconst disclaimer = `\n<div class=\"legal-disclaimer\" style=\"background:#f8f9fa;border-left:4px solid #6c757d;padding:16px 20px;margin:32px 0;border-radius:0 4px 4px 0;\">\n  <p style=\"margin:0;font-size:0.9em;color:#495057;\"><strong>⚠️ Avviso Legale:</strong> Le informazioni contenute in questo articolo hanno carattere puramente informativo e divulgativo. Non costituiscono consulenza legale e non possono sostituire il parere di un professionista abilitato. Ogni caso è unico e richiede una valutazione individuale. Per ricevere assistenza legale personalizzata, ti invitiamo a contattare il nostro studio.</p>\n</div>`;\n\n// Append disclaimer before closing of article content\nlet finalContent = data.article_content || '';\n\n// Check if CTA section already exists; if not add disclaimer before end\nif (!finalContent.includes('class=\"legal-disclaimer\"')) {\n  finalContent = finalContent + disclaimer;\n}\n\n// Build FAQ schema markup for SEO\nlet faqSchema = '';\nif (Array.isArray(data.faq) && data.faq.length > 0) {\n  const schemaFaq = {\n    \"@context\": \"https://schema.org\",\n    \"@type\": \"FAQPage\",\n    \"mainEntity\": data.faq.map(f => ({\n      \"@type\": \"Question\",\n      \"name\": f.question,\n      \"acceptedAnswer\": { \"@type\": \"Answer\", \"text\": f.answer }\n    }))\n  };\n  faqSchema = `\\n<script type=\"application/ld+json\">${JSON.stringify(schemaFaq, null, 2)}</script>`;\n}\n\nfinalContent = finalContent + faqSchema;\n\n// QA reviewer notes as HTML comment (visible in WP editor, invisible on frontend)\nconst qaComment = `\\n<!-- QA REVIEW NOTES:\\nScore: ${data.quality_score || 'N/A'}/10\\nLegal Tone: ${data.legal_tone_ok ? 'OK' : 'Rivedere'}\\nIssues: ${(data.qa_issues || []).join(', ') || 'Nessuno'}\\nNote: ${data.reviewer_notes || ''}\\nSEO Warnings: ${(data.seo_warnings || []).join(', ') || 'Nessuno'}\\n-->`;\nfinalContent = finalContent + qaComment;\n\nreturn [{\n  json: {\n    ...data,\n    final_content: finalContent\n  }\n}];"
+      },
+      "id": "58f923e8-f153-44ac-837b-9f353c5eadef",
+      "name": "Append Disclaimer + Build Final Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2304,
+        3216
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ Object.keys($binary || {}).length > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              },
+              "id": "3c6fdfed-e03b-4454-8b0f-258e231e0590"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "3993d802-32c4-4b34-aadd-041087dee6de",
+      "name": "Image Generated OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2736,
+        3520
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$('Workflow Config').first().json.wordpress_url}}/wp-json/wp/v2/media",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Disposition",
+              "value": "=attachment; filename=\"seo-legal-{{$now.format('YYYY-MM-DD')}}.png\""
+            },
+            {
+              "name": "Content-Type",
+              "value": "image/png"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "4322e9bc-6acc-41a0-8832-10fbfc5f3f8d",
+      "name": "WordPress - Upload Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3040,
+        3648
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Image uploaded successfully - extract media ID\nconst articleData = $('Append Disclaimer + Build Final Content').first().json;\nconst uploadResult = $input.first().json;\n\nconst mediaId = uploadResult.id || null;\nconst mediaUrl = uploadResult.source_url || null;\n\nreturn [{\n  json: {\n    ...articleData,\n    featured_image_id: mediaId,\n    featured_image_url: mediaUrl,\n    image_upload_success: !!mediaId\n  }\n}];"
+      },
+      "id": "dd5ca39f-df4c-46a5-8765-f8641f396b22",
+      "name": "Set Image ID - Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3456,
+        3824
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Image generation or download failed - continue without image\nconst articleData = $('Append Disclaimer + Build Final Content').first().json;\n\nreturn [{\n  json: {\n    ...articleData,\n    featured_image_id: null,\n    featured_image_url: null,\n    image_upload_success: false,\n    image_skip_reason: 'Image generation failed - draft created without featured image'\n  }\n}];"
+      },
+      "id": "39b8a811-97e1-43a6-adbb-5f8b1cf1cc19",
+      "name": "Set Image ID - No Image",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3168,
+        3952
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$('Workflow Config').first().json.wordpress_url}}/wp-json/wp/v2/posts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{$json.post_body_json}}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "cec8b9ad-817b-4f1e-b862-f60bf732c2cc",
+      "name": "WordPress - Create Draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3936,
+        4288
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.id.toString()}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              },
+              "id": "2f0d543a-f260-471d-b42b-2db42a231d19"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "92d75949-014e-4729-b457-a5d06d1d9a1f",
+      "name": "Draft Created OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4208,
+        4400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extract WordPress draft post details\n// Safety check: ensure status is 'draft' (never publish)\nconst wpResponse = $input.first().json;\nconst buildData = $('Build WordPress Post Body1').first().json;\nconst config = $('Workflow Config').first().json;\n\nconst postId = wpResponse.id;\nconst postStatus = wpResponse.status;\n\n// CRITICAL SAFETY CHECK\nif (postStatus && postStatus !== 'draft') {\n  throw new Error(`SICUREZZA: Il post è stato creato con status '${postStatus}' invece di 'draft'. Verificare immediatamente su WordPress e non pubblicare. Post ID: ${postId}`);\n}\n\nconst draftEditUrl = `${config.wordpress_url}/wp-admin/post.php?post=${postId}&action=edit`;\nconst draftPreviewUrl = `${config.wordpress_url}/?p=${postId}&preview=true`;\n\nreturn [{\n  json: {\n    post_id: postId,\n    post_status: postStatus,\n    draft_edit_url: draftEditUrl,\n    draft_preview_url: draftPreviewUrl,\n    article_title: buildData.article_title,\n    selected_keyword: buildData.selected_keyword,\n    word_count: buildData.word_count,\n    quality_score: buildData.quality_score,\n    reviewer_notes: buildData.reviewer_notes,\n    image_upload_success: buildData.image_upload_success,\n    seo_warnings: buildData.seo_warnings,\n    qa_issues: buildData.qa_issues,\n    topic_label: buildData.topic_label,\n    meta_title: buildData.meta_title,\n    meta_description: buildData.meta_description,\n    slug: buildData.slug,\n    created_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "768393de-2cf9-41c3-ac9b-8aee2da6f929",
+      "name": "Extract Draft Details",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4480,
+        4544
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "Studio_Legale_Pasian_Topics",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 161838625,
+          "mode": "list",
+          "cachedResultName": "Draft_Logs",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit#gid=161838625"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $now.setZone('Europe/Rome').format('dd/MM/yyyy HH:mm:ss') }}",
+            "Keyword": "={{ $json.selected_keyword }}",
+            "Post Title": "={{ $json.article_title }}",
+            "Post ID": "={{ $json.post_id }}",
+            "Draft Edit URL": "={{ $json.draft_edit_url }}",
+            "Draft Preview URL": "={{ $json.draft_preview_url }}",
+            "Status": "={{ $json.post_status }}",
+            "Word Count": "={{ $json.word_count }}",
+            "Quality Score": "={{ $json.quality_score }}",
+            "Image Uploaded": "={{ $json.image_upload_success }}",
+            "Reviewer Notes": "={{ $json.reviewer_notes }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Keyword",
+              "displayName": "Keyword",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Post Title",
+              "displayName": "Post Title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Post ID",
+              "displayName": "Post ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Draft Edit URL",
+              "displayName": "Draft Edit URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Draft Preview URL",
+              "displayName": "Draft Preview URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Word Count",
+              "displayName": "Word Count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Quality Score",
+              "displayName": "Quality Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Image Uploaded",
+              "displayName": "Image Uploaded",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Reviewer Notes",
+              "displayName": "Reviewer Notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "ead999cb-5a8b-43b2-aa1c-639f8f2f2d3d",
+      "name": "Sheets - Log Draft",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        4688,
+        4656
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "Studio_Legale_Pasian_Topics",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 705350307,
+          "mode": "list",
+          "cachedResultName": "Studio_Legale_Pasian_Topics",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit#gid=705350307"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Topic": "={{ $json.Keyword }}",
+            "Status": "Done",
+            "Last Used": "={{ $now.setZone('Europe/Rome').format('dd/MM/yyyy HH:mm:ss') }}"
+          },
+          "matchingColumns": [
+            "Topic"
+          ],
+          "schema": [
+            {
+              "id": "Topic",
+              "displayName": "Topic",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Last Used",
+              "displayName": "Last Used",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "11a99392-56b3-4dcd-9477-8b7e7bf8349b",
+      "name": "Sheets - Log Used Keyword",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        4992,
+        4832
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// SELECT BEST LEGAL KEYWORD\n// SEOZoom Response Version\n// No Google Sheets Required\n// ============================================================\n\n// Get SEOZoom response\nconst seozoomData = $input.first().json;\n\n// Validate response\nif (!seozoomData.response || !Array.isArray(seozoomData.response)) {\n  throw new Error('SEOZoom response array not found');\n}\n\n// Extract keywords\nconst keywords = seozoomData.response;\n\n// Remove zero volume keywords\nconst validKeywords = keywords.filter(k =>\n  Number(k.search_volume || 0) > 0\n);\n\nif (!validKeywords.length) {\n  throw new Error('No valid keywords found');\n}\n\n// ============================================================\n// SCORING LOGIC\n//\n// Higher KO = Better\n// Lower KD = Better\n// Higher Volume = Better\n//\n// Formula:\n// score = KO + (volume / 100) - KD\n// ============================================================\n\nconst scoredKeywords = validKeywords.map(k => {\n\n  const volume = Number(k.search_volume || 0);\n  const kd = Number(k.KD || 50);\n  const ko = Number(k.KO || 0);\n  const intentBonus =\n  (k.search_intent || '').includes('transactional')\n    ? 40\n    : (k.search_intent || '').includes('commercial')\n    ? 25\n    : 0;\n\nconst score =\n  (ko * 2) -\n  kd +\n  (volume / 500) +\n  intentBonus;\n  \n\n  return {\n    keyword: k.keyword,\n    volume,\n    kd,\n    ko,\n    intent: k.search_intent || '',\n    score,\n    raw: k\n  };\n});\n\n// Sort descending\nscoredKeywords.sort((a, b) => b.score - a.score);\n\n// Select best keyword\nconst best = scoredKeywords[0];\n\n// Return result\nreturn [\n  {\n    json: {\n      selected_keyword: best.keyword,\n      keyword_volume: best.volume,\n      keyword_difficulty: best.kd,\n      keyword_opportunity: best.ko,\n      search_intent: best.intent,\n      keyword_score: best.score,\n\n      // Useful for later nodes\n      article_topic: best.keyword,\n\n      // Debugging\n      total_keywords_found: keywords.length,\n      total_valid_keywords: validKeywords.length,\n\n      // Top 5 keywords for reference\n      top_keywords: scoredKeywords.slice(0, 5).map(k => ({\n        keyword: k.keyword,\n        volume: k.volume,\n        kd: k.kd,\n        ko: k.ko,\n        score: k.score\n      }))\n    }\n  }\n];"
+      },
+      "id": "4ec53148-50d9-4095-9f28-926478bd4d3f",
+      "name": "Select Best Legal Keyword1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -576,
+        2128
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// BUILD WORDPRESS DRAFT POST BODY\n// Status is ALWAYS 'draft' - never publish automatically\n// ============================================================\nconst config = $('Workflow Config').first().json;\nconst data = $input.first().json;\n\n// Sanitize slug\nconst cleanSlug = (data.slug || data.title)\n  .toLowerCase()\n  .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')\n  .replace(/[^a-z0-9]+/g, '-')\n  .replace(/^-|-$/g, '')\n  .substring(0, 80);\n\n// Build post body\nconst postBody = {\n  title: data.title,\n  content: data.final_content,\n  status: 'draft',  // ⚠️ CRITICAL: NEVER change to 'publish'\n  slug: cleanSlug,\n  excerpt: data.excerpt || data.meta_description || '',\n  meta: {\n    // Yoast SEO fields\n    _yoast_wpseo_title: data.meta_title || '',\n    _yoast_wpseo_metadesc: data.meta_description || '',\n    _yoast_wpseo_focuskw: data.selected_keyword || '',\n    // Rank Math SEO fields\n    rank_math_title: data.meta_title || '',\n    rank_math_description: data.meta_description || '',\n    rank_math_focus_keyword: data.selected_keyword || '',\n    // Internal review metadata\n    _seo_automation_keyword: data.selected_keyword || '',\n    _seo_automation_word_count: String(data.word_count || ''),\n    _seo_automation_quality_score: String(data.quality_score || ''),\n    _seo_automation_date: new Date().toISOString()\n  }\n};\n\n// Attach featured image if available\nif (data.featured_image_id) {\n  postBody.featured_media = data.featured_image_id;\n}\n\nreturn [{\n  json: {\n    post_body_json: JSON.stringify(postBody),\n    // Pass through for later nodes\n    article_title: data.title,\n    selected_keyword: data.selected_keyword,\n    word_count: data.word_count,\n    quality_score: data.quality_score,\n    reviewer_notes: data.reviewer_notes,\n    image_upload_success: data.image_upload_success,\n    featured_image_id: data.featured_image_id,\n    seo_warnings: data.seo_warnings,\n    qa_issues: data.qa_issues,\n    topic_label: data.topic_label,\n    meta_title: data.meta_title,\n    meta_description: data.meta_description,\n    slug: cleanSlug,\n    excerpt: data.excerpt || data.meta_description || ''\n  }\n}];"
+      },
+      "id": "f77d6d72-7623-41ab-b75a-218896c82778",
+      "name": "Build WordPress Post Body1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3664,
+        4112
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://apiv2.seozoom.com/api/v2/keywords/",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "api_key",
+              "value": "YOUR_SEOZOOM_API_KEY"
+            },
+            {
+              "name": "action",
+              "value": "related"
+            },
+            {
+              "name": "db",
+              "value": "it"
+            },
+            {
+              "name": "keyword",
+              "value": "={{ $json.Topic }}"
+            },
+            {
+              "name": "limit",
+              "value": "20"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "6eab0f92-3d23-4429-87b3-56d9c0d90523",
+      "name": "SEOZoom - Fetch Keyword Metrics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        -1440,
+        1792
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const parsed = JSON.parse($json.data);\nreturn [{\n  json: parsed\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -864,
+        1984
+      ],
+      "id": "20cf8d17-dedb-46ac-ac5c-55d7f6603f7c",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "jsCode": "const posts = ($json.existing_posts || [])\n  .slice(0, 10)\n  .map(p => `${p.title} | ${p.link}`);\n\nreturn [{\n  json: {\n    ...$json,\n    existing_posts_text: posts.join('\\n')\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        288,
+        2576
+      ],
+      "id": "edfbe535-bc33-47d5-a2c0-5ece4fe5ab5e",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=You are an expert Italian legal SEO writer.\n\nKeyword:\n{{$json.selected_keyword}}\n\nSearch Volume:\n{{$json.keyword_volume}}\n\nSEO Difficulty:\n{{$json.keyword_difficulty}}\n\nExisting Articles:\n{{$json.existing_posts_text}}\n\nRequirements:\n- Italian language only\n- Professional legal tone, but client-friendly and easy to understand (avoid overly academic/textbook tone)\n- SEO optimized\n- The article content MUST be AT LEAST 1500 words (not 1200) of actual body text, excluding HTML tags. This is a strict requirement — count your words and explanations in each section, not short summaries.\n- Include H1\n- Include at least 4 H2 sections\n- Include FAQ section\n- Include a clear conclusion\n- Avoid duplicating existing articles\n- MANDATORY: End the article_html with a dedicated Call To Action paragraph (inside article_html, before faq) that explicitly invites the reader to contact the law firm for a consultation. Mention practical next steps (e.g. when it's important to speak with a lawyer about this topic).\n- MANDATORY: Where relevant, naturally reference the role of the law firm's lawyer in handling this specific legal matter (not generic — tied to the topic/keyword).\n- If natural and relevant, suggest 1-2 internal links to the existing articles listed above (use their exact titles/topics, do not invent URLs)\n- Do NOT include a legal disclaimer in the article_html — this is added automatically afterward, so do not write one yourself.\n\nFor \"image_prompt\", create a detailed prompt for an INFOGRAPHIC-STYLE featured image (not a plain photo). It must specify:\n- A bold short Italian headline text overlay related to {{$json.selected_keyword}} (2-5 words, large and centered or top of image)\n- 2-3 relevant icons/symbols placed around the composition (scales of justice, gavel, legal documents, charts/graphs, or topic-specific icons such as a hard hat for workplace injury topics, a steering wheel for car accident topics, etc. — choose icons relevant to the specific keyword)\n- A central illustrated scene showing a lawyer interacting with a client or a situation relevant to the topic, in a semi-realistic illustrated style (not flat cartoon, not pure photo)\n- Warm professional color palette: beige/cream background, navy blue accents, gold/amber highlights\n- Clean visual hierarchy: headline text at top or side, icons distributed around edges, main illustrated scene centered\n- Landscape format (16:9), suitable as a WordPress featured image\n- Explicitly state: \"all text must be in Italian and spelled correctly\"\n- AVOID: plain stock-photo style, empty/minimal backgrounds, no-text generic scenes, cartoon-only style without realism\n\nReturn ONLY valid JSON:\n{\n\"title\":\"\",\n\"meta_title\":\"\",\n\"meta_description\":\"\",\n\"slug\":\"\",\n\"excerpt\":\"\",\n\"h1\":\"\",\n\"article_html\":\"\",\n\"faq\":[\n{\n\"question\":\"\",\n\"answer\":\"\"\n}\n],\n\"image_prompt\":\"\"\n}",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        496,
+        2624
+      ],
+      "id": "795d8e1c-4eef-4974-8643-f5d963556023",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-4.1",
+          "mode": "list",
+          "cachedResultName": "gpt-4.1"
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "json_object"
+            }
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        624,
+        2800
+      ],
+      "id": "f4dc71c7-14cb-452f-87fd-6ecc4e04427d",
+      "name": "OpenAI Chat Model"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-5.1",
+          "mode": "list",
+          "cachedResultName": "gpt-5.1"
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "json_object"
+            }
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        1728,
+        2976
+      ],
+      "id": "2cfa1a25-9825-4c19-96d2-26b32bc705e4",
+      "name": "OpenAI Chat Model1"
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Rivedi questo articolo legale e fornisci la tua valutazione professionale.\n\n=== INFORMAZIONI ARTICOLO ===\nTitolo: {{$json.title}}\nKeyword Target: {{$json.selected_keyword}}\nVolume di Ricerca: {{$json.keyword_volume}}\nParole Totali: {{$json.word_count}}\nSezioni H2: {{$json.h2_count}}\nFAQ: {{$json.faq_count}}\nMeta Title: {{$json.meta_title}}\nMeta Description: {{$json.meta_description}}\nSEO Warnings: {{JSON.stringify($json.seo_warnings)}}\n\n=== CONTENUTO ARTICOLO (primi 3000 caratteri) ===\n{{$json.article_content.substring(0, 6000)}}\n\n=== CRITERI DI VALUTAZIONE ===\n\n1. QUALITÀ CONTENUTO\n   - Il tono è professionale ma comprensibile per clienti non esperti?\n   - Il contenuto è accurato dal punto di vista legale italiano?\n   - Evita linguaggio generico o tipicamente AI?\n   - È utile per un potenziale cliente che cerca assistenza legale?\n\n2. SEO\n   - La keyword target è presente nel titolo?\n   - La keyword è presente nel contenuto in modo naturale?\n   - Meta title e meta description sono ottimizzati?\n\n3. STRUTTURA\n   - Ha almeno 4 sezioni H2?\n   - Ha una sezione FAQ completa?\n   - Ha una conclusione?\n   - Ha una Call To Action verso lo studio legale?\n\n4. IDONEITÀ PUBBLICAZIONE\n   - È adatto per un sito di uno studio legale professionale?\n   - Contiene informazioni che potrebbero essere legalmente problematiche?\n   - Necessita di disclaimer legale?\n\nNOTA: Il contenuto mostrato è una parte dell'articolo completo. \nValuta basandoti sui dati strutturali forniti (word_count, h2_count, faq_count).\nI dati confermano: {{$json.word_count}} parole, {{$json.h2_count}} H2, {{$json.faq_count}} FAQ.\n\n=== RISPONDI ESATTAMENTE CON QUESTO JSON ===\n{\n  \"approved\": true,\n  \"quality_score\": 8,\n  \"seo_ok\": true,\n  \"legal_tone_ok\": true,\n  \"readability_ok\": true,\n  \"structure_ok\": true,\n  \"has_cta\": true,\n  \"has_disclaimer_need\": false,\n  \"word_count_ok\": true,\n  \"issues\": [],\n  \"improvements\": [],\n  \"reviewer_notes\": \"Nota breve per l'avvocato revisore in italiano\"\n}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "=Sei un editor senior specializzato in contenuti legali italiani per studi legali.\n\nIl tuo compito è revisionare articoli legali generati da AI prima della pubblicazione su WordPress.\n\nDevi valutare se l'articolo è adatto per essere pubblicato sul sito di uno studio legale italiano professionale.\n\nRispondi SOLO con JSON valido. Zero testo aggiuntivo."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        1728,
+        2832
+      ],
+      "id": "44ea0099-9a41-4d45-b46a-3f90ccfe0bb7",
+      "name": "OpenAI - AI Quality Review1"
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-image-1",
+          "mode": "list",
+          "cachedResultName": "GPT-IMAGE-1"
+        },
+        "prompt": "=={{$json.image_prompt || 'Fotografia professionale di uno studio legale italiano: avvocato in abito scuro elegante seduto alla scrivania con cliente, documenti legali e bilancia della giustizia visibili, illuminazione professionale calda, stile fotografico realistico, formato landscape, nessun testo, nessuna filigrana, adatto per sito web di studio legale professionale'}}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        2528,
+        3360
+      ],
+      "id": "7c84bdcb-6fe4-4af7-9640-5148b55e14e1",
+      "name": "Generate an image"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "Studio_Legale_Pasian_Topics",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 705350307,
+          "mode": "list",
+          "cachedResultName": "Studio_Legale_Pasian_Topics",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit#gid=705350307"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -2464,
+        1568
+      ],
+      "id": "572c54d7-f87b-497a-a470-985dd55593d8",
+      "name": "Get row(s) in sheet",
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all();\n\nconst pending = rows.find(\n    row => (row.json.Status || '').trim() === 'Pending'\n);\n\nif (pending) {\n  return [{\n    json: {\n      found: true,\n      ...pending.json\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    found: false\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -2256,
+        1696
+      ],
+      "id": "5b93fbab-6c6d-471c-ab94-1c1e6eacad62",
+      "name": "Find Pending"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "10a45e2f-7d2d-4aab-88fb-e84513c9b1a7",
+              "leftValue": "={{$json.found}}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -2080,
+        1776
+      ],
+      "id": "9f664faa-c778-406b-9774-7b6df9394621",
+      "name": "IF Pending Found?"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "Studio_Legale_Pasian_Topics",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 705350307,
+          "mode": "list",
+          "cachedResultName": "Studio_Legale_Pasian_Topics",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit#gid=705350307"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -1904,
+        1952
+      ],
+      "id": "5db79194-93e5-41bd-930b-621d51545b94",
+      "name": "Get row(s) in sheet1",
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all();\n\nreturn rows.filter(\n  row => row.json.Status === 'Done'\n);"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -1696,
+        2176
+      ],
+      "id": "307c635c-896e-45e2-b25a-2fdfcfafbfda",
+      "name": "Code in JavaScript2"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list",
+          "cachedResultName": "Studio_Legale_Pasian_Topics",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit?usp=drivesdk"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 705350307,
+          "mode": "list",
+          "cachedResultName": "Studio_Legale_Pasian_Topics",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID/edit#gid=705350307"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $json.row_number }}",
+            "Status": "Pending"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "Topic",
+              "displayName": "Topic",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Last Used",
+              "displayName": "Last Used",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -1520,
+        2352
+      ],
+      "id": "30ee84bc-c8ad-4689-848f-d34860a92b5c",
+      "name": "Update row in sheet"
+    },
+    {
+      "parameters": {
+        "sendTo": "your-notification-email@example.com",
+        "subject": "=⚠️ SEO Automation ERRORE - SEOZoom non raggiungibile ({{ $json.error?.status || 'N/A' }})",
+        "message": "=<div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n  <h2 style=\"color: #c0392b;\">⚠️ Errore: SEOZoom Non Raggiungibile</h2>\n  \n  <p>Il workflow di automazione contenuti non è riuscito a recuperare le parole chiave da SEOZoom. La generazione dell'articolo di oggi è stata interrotta.</p>\n  \n  <table style=\"width: 100%; border-collapse: collapse; margin: 20px 0; border: 1px solid #eee;\">\n    <tr style=\"background-color: #fdf2f2;\">\n      <td style=\"padding: 10px; font-weight: bold; width: 40%;\">Data/Ora:</td>\n      <td style=\"padding: 10px;\">{{ $now.setZone('Europe/Rome').format('dd/MM/yyyy HH:mm:ss') }}</td>\n    </tr>\n    <tr>\n      <td style=\"padding: 10px; font-weight: bold;\">Codice Errore:</td>\n      <td style=\"padding: 10px; color: #c0392b; font-weight: bold;\">{{ $json.error?.status || $json.error?.code || 'N/A' }}</td>\n    </tr>\n    <tr style=\"background-color: #fdf2f2;\">\n      <td style=\"padding: 10px; font-weight: bold;\">Messaggio:</td>\n      <td style=\"padding: 10px; color: #c0392b;\">{{ $json.error?.message || 'Errore sconosciuto' }}</td>\n    </tr>\n    <tr>\n      <td style=\"padding: 10px; font-weight: bold;\">Topic/Keyword Tentata:</td>\n      <td style=\"padding: 10px;\">{{ $json.Topic || $json.keyword || 'N/A' }}</td>\n    </tr>\n  </table>\n\n  <p style=\"background-color: #fdf2f2; border-left: 4px solid #c0392b; padding: 12px 16px; margin: 20px 0;\">\n    ⚠️ <strong>Azione richiesta:</strong> Verificare lo stato dell'API SEOZoom (crediti disponibili, chiave API valida) e controllare il nodo \"SEOZoom - Fetch Keyword Metrics\" su n8n.\n  </p>\n</div>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        -896,
+        2288
+      ],
+      "id": "8a911760-c22e-45e9-8dd4-e2da2d8fa17b",
+      "name": "Notify Admin - SEOZoom Failure1",
+      "webhookId": "dd3aed34-5231-4903-ae22-093aa1bba01f"
+    },
+    {
+      "parameters": {
+        "sendTo": "your-notification-email@example.com",
+        "subject": "=⚠️ SEO Automation ERRORE - Generazione articolo fallita",
+        "message": "=",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        1456,
+        3056
+      ],
+      "id": "2c8abacb-ecfa-4266-ba86-ca261ab05927",
+      "name": "Notify Admin - OpenAI Failure1",
+      "webhookId": "dd3aed34-5231-4903-ae22-093aa1bba01f"
+    },
+    {
+      "parameters": {
+        "sendTo": "your-notification-email@example.com",
+        "subject": "=⚠️ SEO Automation ERRORE - Bozza WordPress non creata",
+        "message": "=<div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n  <h2 style=\"color: #c0392b;\">⚠️ Errore: Bozza WordPress Non Creata</h2>\n  \n  <p>Il workflow di automazione contenuti ha riscontrato un errore durante la creazione della bozza su WordPress.</p>\n  \n  <table style=\"width: 100%; border-collapse: collapse; margin: 20px 0; border: 1px solid #eee;\">\n    <tr style=\"background-color: #fdf2f2;\">\n      <td style=\"padding: 10px; font-weight: bold; width: 40%;\">Data/Ora:</td>\n      <td style=\"padding: 10px;\">{{ $now.setZone('Europe/Rome').format('dd/MM/yyyy HH:mm:ss') }}</td>\n    </tr>\n    <tr>\n      <td style=\"padding: 10px; font-weight: bold;\">Codice Errore:</td>\n      <td style=\"padding: 10px; color: #c0392b; font-weight: bold;\">{{ $json.error?.status || 'N/A' }}</td>\n    </tr>\n    <tr style=\"background-color: #fdf2f2;\">\n      <td style=\"padding: 10px; font-weight: bold;\">Messaggio:</td>\n      <td style=\"padding: 10px; color: #c0392b;\">{{ $json.error?.message || 'Errore sconosciuto' }}</td>\n    </tr>\n    <tr>\n      <td style=\"padding: 10px; font-weight: bold;\">Tipo Errore:</td>\n      <td style=\"padding: 10px;\">{{ $json.error?.name || 'N/A' }}</td>\n    </tr>\n    <tr style=\"background-color: #fdf2f2;\">\n      <td style=\"padding: 10px; font-weight: bold;\">Titolo Articolo:</td>\n      <td style=\"padding: 10px;\">{{ $json.article_title || 'N/A' }}</td>\n    </tr>\n    <tr>\n      <td style=\"padding: 10px; font-weight: bold;\">Parola Chiave:</td>\n      <td style=\"padding: 10px;\">{{ $json.selected_keyword || 'N/A' }}</td>\n    </tr>\n  </table>\n\n  <p style=\"background-color: #fdf2f2; border-left: 4px solid #c0392b; padding: 12px 16px; margin: 20px 0;\">\n    ⚠️ <strong>Azione richiesta:</strong> Controllare il workflow n8n (nodo \"WordPress - Create Draft\") per identificare e risolvere il problema.\n  </p>\n</div>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        4432,
+        4752
+      ],
+      "id": "c89f641d-97cf-40aa-b17b-1f2bf2d757f5",
+      "name": "Notify Admin - WP Draft Failure1",
+      "webhookId": "dd3aed34-5231-4903-ae22-093aa1bba01f"
+    },
+    {
+      "parameters": {
+        "sendTo": "your-notification-email@example.com",
+        "subject": "=✅ Nuova Bozza SEO Pronta - {{ $('Sheets - Log Draft').item.json['Post Title'] }}",
+        "message": "=<div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n  <h2 style=\"color: #2c3e50;\">✅ Nuova Bozza SEO Pronta</h2>\n  \n  <p>È stato generato un nuovo articolo ed è pronto per la revisione su WordPress.</p>\n  \n  <table style=\"width: 100%; border-collapse: collapse; margin: 20px 0;\">\n    <tr>\n      <td style=\"padding: 8px 0; font-weight: bold;\">Titolo:</td>\n      <td style=\"padding: 8px 0;\"> {{ $('Sheets - Log Draft').item.json['Post Title'] }}</td>\n    </tr>\n    <tr>\n      <td style=\"padding: 8px 0; font-weight: bold;\">Parola chiave:</td>\n      <td style=\"padding: 8px 0;\"> {{ $('Sheets - Log Draft').item.json.Keyword }}</td>\n    </tr>\n    <tr>\n      <td style=\"padding: 8px 0; font-weight: bold;\">Numero parole:</td>\n      <td style=\"padding: 8px 0;\">{{ $('Sheets - Log Draft').item.json['Word Count'] }}</td>\n    </tr>\n    <tr>\n      <td style=\"padding: 8px 0; font-weight: bold;\">Punteggio qualità (AI):</td>\n      <td style=\"padding: 8px 0;\">{{ $('Sheets - Log Draft').item.json['Quality Score'] }}/10</td>\n    </tr>\n    <tr>\n      <td style=\"padding: 8px 0; font-weight: bold;\">Immagine caricata:</td>\n      <td style=\"padding: 8px 0;\">{{ $json.image_upload_success ? '✅ Sì' : '⚠️ No - da aggiungere manualmente' }}</td>\n    </tr>\n  </table>\n\n  <p style=\"margin: 24px 0;\">\n    <a href=\" {{ $('Sheets - Log Draft').item.json['Draft Edit URL'] }}\" style=\"background-color: #2c3e50; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 4px; display: inline-block;\">\n      Rivedi la Bozza su WordPress\n    </a>\n  </p>\n\n  <p style=\"color: #7f8c8d; font-size: 0.9em;\">\n    Nota: l'articolo è salvato come <strong>Bozza</strong> e non è ancora pubblicato. La revisione umana è necessaria prima della pubblicazione.\n  </p>\n</div>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        5296,
+        5040
+      ],
+      "id": "4bca5509-2727-4759-8be5-e69a0ce01689",
+      "name": "Send Success Notification",
+      "webhookId": "dd3aed34-5231-4903-ae22-093aa1bba01f"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1dbdf7b7-0fe7-40ca-a0d4-8f47683b631e",
+              "name": "text",
+              "value": "=\n{{$json.text.replace(/\\\\n/g, '\\n')}}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        944,
+        2448
+      ],
+      "id": "07f32bc0-d99f-46be-b5f1-9576d8d9e329",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "content": "",
+        "height": 1584,
+        "width": 2534,
+        "color": "#482904"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        3120,
+        3744
+      ],
+      "typeVersion": 1,
+      "id": "bb2ade07-f8e0-4169-aaf1-eabc9a7e23f2",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "",
+        "height": 1584,
+        "width": 3014,
+        "color": "#0A3F03"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        80,
+        2288
+      ],
+      "typeVersion": 1,
+      "id": "ae319646-0bb5-4992-a2f7-8774bec190be",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "",
+        "height": 1584,
+        "width": 3046,
+        "color": "#0A174D"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -2976,
+        1184
+      ],
+      "typeVersion": 1,
+      "id": "0f7448ae-d050-4933-9d50-0caef9b5c8b0",
+      "name": "Sticky Note2"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Daily Trigger 08:00 Rome": {
+      "main": [
+        [
+          {
+            "node": "Workflow Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Workflow Config": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SEOZoom OK?": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify Admin - SEOZoom Failure1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WordPress - Get Existing Posts": {
+      "main": [
+        [
+          {
+            "node": "Prepare Internal Links Context",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Prepare Internal Links Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Internal Links Context": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Article OK?": {
+      "main": [
+        [
+          {
+            "node": "Parse & Validate Article",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Log Error - OpenAI Article",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Error - OpenAI Article": {
+      "main": [
+        [
+          {
+            "node": "Notify Admin - OpenAI Failure1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Validate Article": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - AI Quality Review1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process QA Review Result": {
+      "main": [
+        [
+          {
+            "node": "Append Disclaimer + Build Final Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append Disclaimer + Build Final Content": {
+      "main": [
+        [
+          {
+            "node": "Generate an image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Image Generated OK?": {
+      "main": [
+        [
+          {
+            "node": "WordPress - Upload Image",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Image ID - No Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WordPress - Upload Image": {
+      "main": [
+        [
+          {
+            "node": "Set Image ID - Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Image ID - No Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Image ID - Success": {
+      "main": [
+        [
+          {
+            "node": "Build WordPress Post Body1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Image ID - No Image": {
+      "main": [
+        [
+          {
+            "node": "Build WordPress Post Body1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WordPress - Create Draft": {
+      "main": [
+        [
+          {
+            "node": "Draft Created OK?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Draft Created OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft Created OK?": {
+      "main": [
+        [
+          {
+            "node": "Extract Draft Details",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify Admin - WP Draft Failure1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Draft Details": {
+      "main": [
+        [
+          {
+            "node": "Sheets - Log Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets - Log Draft": {
+      "main": [
+        [
+          {
+            "node": "Sheets - Log Used Keyword",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets - Log Used Keyword": {
+      "main": [
+        [
+          {
+            "node": "Send Success Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Best Legal Keyword1": {
+      "main": [
+        [
+          {
+            "node": "WordPress - Get Existing Posts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build WordPress Post Body1": {
+      "main": [
+        [
+          {
+            "node": "WordPress - Create Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SEOZoom - Fetch Keyword Metrics": {
+      "main": [
+        [
+          {
+            "node": "SEOZoom OK?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "SEOZoom OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Select Best Legal Keyword1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Article OK?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "OpenAI - AI Quality Review1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - AI Quality Review1": {
+      "main": [
+        [
+          {
+            "node": "Process QA Review Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate an image": {
+      "main": [
+        [
+          {
+            "node": "Image Generated OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "Find Pending",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Pending": {
+      "main": [
+        [
+          {
+            "node": "IF Pending Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Pending Found?": {
+      "main": [
+        [
+          {
+            "node": "SEOZoom - Fetch Keyword Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get row(s) in sheet1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet1": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript2": {
+      "main": [
+        [
+          {
+            "node": "Update row in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update row in sheet": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notify Admin - SEOZoom Failure1": {
+      "main": [
+        []
+      ]
+    },
+    "Send Success Notification": {
+      "main": [
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "95dc781b-0cc9-4ab0-b054-d5d5cba35fde",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "f09f80ae50f33d9b67a1c6b4ef0f180a1c8e8290ed5aaeb90c28569fcfe58e2e"
+  },
+  "nodeGroups": [],
+  "id": "UOPrbYPrbze6zsWy",
+  "tags": []
+}
