@@ -471,9 +471,8 @@ Generates infographic-style legal images based on AI-generated prompts. The prom
 
 **Anukul Chandra**
 
-- AI Automation Engineer
-- Workflow Automation Specialist
-- AI Solutions Developer
+- AI Engineer
+- Automation Specialist
 
 <p align="center">
   Built with n8n · OpenAI · Skyvern · SEOZoom · WordPress
