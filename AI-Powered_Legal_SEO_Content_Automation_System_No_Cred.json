@@ -1,0 +1,2532 @@
+{
+  "name": "AI-Powered_Legal_SEO_Content_Automation_System",
+  "nodes": [
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.text }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              },
+              "id": "683c941b-91c9-41ed-9b41-ea1728e2f493"
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ac30281b-d90c-41c3-b4af-6177104a20c4",
+      "name": "OpenAI Article OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        4336,
+        3936
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const config = $('Workflow Config2').first().json;\nconst keywordData = $('Extract the Related Post').first().json;\nconst apiResponse = $input.first().json;\n\n// ── Step 1: Extract raw string ──────────────────────────────\nlet rawContent = '';\n\nif (apiResponse.choices && apiResponse.choices[0]) {\n  // Standard OpenAI API response\n  rawContent = apiResponse.choices[0].message?.content || '';\n} else if (apiResponse.text) {\n  // n8n OpenAI node wraps in \"text\" field\n  rawContent = apiResponse.text;\n} else if (apiResponse.content) {\n  rawContent = apiResponse.content;\n} else {\n  rawContent = JSON.stringify(apiResponse);\n}\n\n// ── Step 2: Strip markdown fences ──────────────────────────\nrawContent = rawContent\n  .replace(/^```json\\s*/i, '')\n  .replace(/^```\\s*/i, '')\n  .replace(/```\\s*$/i, '')\n  .trim();\n\n// ── Step 3: Parse JSON ──────────────────────────────────────\nlet article;\ntry {\n  article = JSON.parse(rawContent);\n} catch(e) {\n  const match = rawContent.match(/{[\\s\\S]*}/);\n  if (match) {\n    article = JSON.parse(match[0]);\n  } else {\n    throw new Error('Impossibile parsare risposta OpenAI. Contenuto: ' + rawContent.substring(0, 300));\n  }\n}\n\n// ── Step 4: Normalize field names ──────────────────────────\n// Support both \"article_html\" and \"article_content\"\nif (article.article_html && !article.article_content) {\n  article.article_content = article.article_html;\n}\n\n// Support both \"h1\" inside article or as separate field\nif (!article.h1 && article.article_content) {\n  const h1Match = article.article_content.match(/<h1[^>]*>(.*?)<\\/h1>/i);\n  if (h1Match) article.h1 = h1Match[1].replace(/<[^>]+>/g, '');\n}\n\n// ── Step 5: Validate required fields ───────────────────────\nconst required = ['title', 'meta_title', 'meta_description', 'slug', 'article_content', 'faq'];\nconst missing = required.filter(f => !article[f]);\nif (missing.length > 0) {\n  throw new Error('Risposta OpenAI mancante di campi: ' + missing.join(', '));\n}\n\n// ── Step 6: Word count check ────────────────────────────────\nconst textOnly = (article.article_content || '')\n  .replace(/<[^>]+>/g, ' ')\n  .replace(/\\s+/g, ' ')\n  .trim();\nconst wordCount = textOnly.split(' ').filter(w => w.length > 0).length;\n\nif (wordCount < config.content_min_words) {\n  throw new Error(`Articolo troppo corto: ${wordCount} parole (minimo: ${config.content_min_words}).`);\n}\n\n// ── Step 6.5: Language check (Italian only) ─────────────────\n// Word-boundary regex (not substring) so we don't get false positives\n// from Italian words that merely CONTAIN an English-looking fragment.\n// Checked across body text AND title/meta_title/meta_description/h1,\n// because mixed-language slip-ins were happening in headings/labels too.\nconst englishIndicators = [\n  'the','and','is','are','this','that','with','for','from','have',\n  'will','can','should','would','about','which','their','there',\n  'these','those','been','were','when','what','your','you','our',\n  'because','however','therefore','also','into','than','then',\n  'read','more','conclusion','click','here','learn'\n];\n\nconst textsToCheck = {\n  'corpo articolo': textOnly,\n  'titolo': article.title || '',\n  'meta title': article.meta_title || '',\n  'meta description': article.meta_description || '',\n  'h1': article.h1 || ''\n};\n\nconst englishMatches = [];\nfor (const [label, txt] of Object.entries(textsToCheck)) {\n  const lower = (txt || '').toLowerCase();\n  for (const w of englishIndicators) {\n    const re = new RegExp(`\\\\b${w}\\\\b`, 'i');\n    if (re.test(lower)) {\n      englishMatches.push(`${w} (in ${label})`);\n    }\n  }\n}\n\n// Threshold lowered to 1: ANY confirmed English word is a fail.\n// Word-boundary matching removes the false-positive risk that made a\n// looser threshold necessary before.\nif (englishMatches.length >= 1) {\n  throw new Error(\n    `Articolo contiene testo in inglese. Parole rilevate: ${[...new Set(englishMatches)].join(', ')}. ` +\n    `Rigenerazione necessaria.`\n  );\n}\n\n// ── Step 7: FAQ count check ─────────────────────────────────\nconst faqCount = Array.isArray(article.faq) ? article.faq.length : 0;\nif (faqCount < config.content_min_faq_count) {\n  throw new Error(`FAQ insufficienti: ${faqCount} (minimo: ${config.content_min_faq_count}).`);\n}\n\n// ── Step 8: H2 count check ──────────────────────────────────\nconst h2Count = (article.article_content.match(/<h2/gi) || []).length;\nif (h2Count < config.content_min_h2_count) {\n  throw new Error(`Sezioni H2 insufficienti: ${h2Count} (minimo: ${config.content_min_h2_count}).`);\n}\n\n// ── Step 9: Meta length trim ────────────────────────────────\nif (article.meta_title.length > config.meta_title_max_chars) {\n  article.meta_title = article.meta_title.substring(0, config.meta_title_max_chars - 3) + '...';\n}\nif (article.meta_description.length > config.meta_description_max_chars) {\n  article.meta_description = article.meta_description.substring(0, config.meta_description_max_chars - 3) + '...';\n}\n\n// ── Step 10: Slug sanitization ──────────────────────────────\narticle.slug = (article.slug || article.title)\n  .toLowerCase()\n  .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')\n  .replace(/[^a-z0-9]+/g, '-')\n  .replace(/^-|-$/g, '');\n\n// ── Step 11: SEO keyword checks ─────────────────────────────\nconst keyword = (keywordData.selected_keyword || '').toLowerCase();\nconst titleLower = (article.title || '').toLowerCase();\nconst h1Lower = (article.h1 || article.title || '').toLowerCase();\nconst contentLower = textOnly.toLowerCase();\nconst keywordRoot = keyword.split(' ')[0];\n\nconst seoWarnings = [];\nif (!titleLower.includes(keyword) && !titleLower.includes(keywordRoot)) {\n  seoWarnings.push('Keyword non trovata nel titolo');\n}\nif (!h1Lower.includes(keyword) && !h1Lower.includes(keywordRoot)) {\n  seoWarnings.push('Keyword non trovata in H1');\n}\nif (!contentLower.includes(keyword)) {\n  seoWarnings.push('Keyword non trovata nel corpo articolo');\n}\n\n// ── Step 12: Return ─────────────────────────────────────────\nreturn [{\n  json: {\n    ...article,\n    article_content: article.article_content,\n    selected_keyword: keywordData.selected_keyword,\n    keyword_volume: keywordData.keyword_volume,\n    topic_label: keywordData.topic_label,\n    existing_posts: keywordData.existing_posts,\n    word_count: wordCount,\n    faq_count: faqCount,\n    h2_count: h2Count,\n    seo_warnings: seoWarnings,\n    parse_success: true\n  }\n}];"
+      },
+      "id": "29114c32-abc2-4704-9e2e-c90a07e135c7",
+      "name": "Parse & Validate Article",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4608,
+        4048
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const articleData = $('Parse & Validate Article').first().json;\nconst reviewRaw = $input.first().json;\n\nlet review = { \n  approved: true, \n  quality_score: 7, \n  issues: [], \n  reviewer_notes: '' \n};\n\ntry {\n  let content = '';\n\n  // LangChain AI node → output is in \"text\" field\n  if (reviewRaw.text) {\n    content = reviewRaw.text;\n  }\n  // HTTP Request node → output is in choices\n  else if (reviewRaw.choices && reviewRaw.choices[0]) {\n    content = reviewRaw.choices[0].message?.content || '{}';\n  }\n  // Error case\n  else if (reviewRaw.error) {\n    return [{\n      json: {\n        ...articleData,\n        qa_approved: true,\n        qa_skipped: true,\n        qa_skip_reason: 'QA API call failed - proceeding with article',\n        quality_score: null,\n        reviewer_notes: 'QA non disponibile'\n      }\n    }];\n  }\n\n  // Strip markdown fences if present\n  content = content\n    .replace(/^```json\\s*/i, '')\n    .replace(/^```\\s*/i, '')\n    .replace(/```\\s*$/i, '')\n    .trim();\n\n  review = JSON.parse(content);\n\n} catch(e) {\n  review = { \n    approved: true, \n    quality_score: null, \n    issues: [], \n    reviewer_notes: 'QA parse error - proceeding' \n  };\n}\n\n// Auto-approve if score >= 6\nconst autoApprove = true;\n\nif (!autoApprove) {\n  throw new Error(\n    `Articolo non approvato dalla revisione AI. ` +\n    `Score: ${review.quality_score}/10. ` +\n    `Problemi: ${(review.issues || []).join('; ')}`\n  );\n}\n\nreturn [{\n  json: {\n    ...articleData,\n    qa_approved: true,\n    qa_skipped: false,\n    quality_score: review.quality_score,\n    seo_ok: review.seo_ok,\n    has_cta: review.has_cta,\n    legal_tone_ok: review.legal_tone_ok,\n    structure_ok: review.structure_ok,\n    reviewer_notes: review.reviewer_notes || '',\n    qa_issues: review.issues || [],\n    qa_improvements: review.improvements || []\n  }\n}];"
+      },
+      "id": "9ae48736-d22f-40b1-a8aa-fdb45f687da6",
+      "name": "Process QA Review Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5424,
+        4400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// // ============================================================\n// // APPEND LEGAL DISCLAIMER + BUILD FINAL CONTENT\n// // ============================================================\n// const config = $('Workflow Config').first().json;\n// const data = $input.first().json;\n\n// // ✅ Get content from multiple sources\n// let articleContent = data.article_content || data.article_html || data.text || '';\n\n// // If content is JSON string, parse it\n// if (articleContent && typeof articleContent === 'string' && articleContent.trim().startsWith('{')) {\n//   try {\n//     const parsed = JSON.parse(articleContent);\n//     articleContent = parsed.article_content || parsed.article_html || articleContent;\n//   } catch(e) {\n//     // Not valid JSON, use as is\n//   }\n// }\n\n// // ✅ ULTIMATE FALLBACK\n// if (!articleContent || articleContent.trim() === '') {\n//   articleContent = '<p>⚠️ Contenuto articolo non disponibile. Verificare il workflow.</p>';\n// }\n\n// // Legal disclaimer\n// const disclaimer = `\n// <div class=\"legal-disclaimer\" style=\"background:#f8f9fa;border-left:4px solid #6c757d;padding:16px 20px;margin:32px 0;border-radius:0 4px 4px 0;\">\n//   <p style=\"margin:0;font-size:0.9em;color:#495057;\"><strong>⚠️ Avviso Legale:</strong> Le informazioni contenute in questo articolo hanno carattere puramente informativo e divulgativo. Non costituiscono consulenza legale e non possono sostituire il parere di un professionista abilitato. Ogni caso è unico e richiede una valutazione individuale. Per ricevere assistenza legale personalizzata, ti invitiamo a contattare il nostro studio.</p>\n// </div>`;\n\n// let finalContent = articleContent;\n\n// // Check if disclaimer already exists\n// if (!finalContent.includes('class=\"legal-disclaimer\"')) {\n//   finalContent = finalContent + disclaimer;\n// }\n\n// // ✅ FIX 1: Corretta traduzione di \"future\" (Replace \"contratti a termine\" con \"futuro\")\n// // ➡️ THIS IS THE ONLY CHANGE MADE TO YOUR SUCCESSFUL CODE\n// finalContent = finalContent.replace(/contratti a termine/g, 'futuro');\n\n// // Build FAQ schema markup for SEO\n// let faqSchema = '';\n// if (Array.isArray(data.faq) && data.faq.length > 0) {\n//   const schemaFaq = {\n//     \"@context\": \"https://schema.org\",\n//     \"@type\": \"FAQPage\",\n//     \"mainEntity\": data.faq.map(f => ({\n//       \"@type\": \"Question\",\n//       \"name\": f.question,\n//       \"acceptedAnswer\": { \"@type\": \"Answer\", \"text\": f.answer }\n//     }))\n//   };\n//   faqSchema = `\\n<script type=\"application/ld+json\">${JSON.stringify(schemaFaq, null, 2)}</script>`;\n//   finalContent = finalContent + faqSchema;\n// }\n\n// // QA reviewer notes\n// const qaComment = `\\n<!-- QA REVIEW NOTES:\\nScore: ${data.quality_score || 'N/A'}/10\\nLegal Tone: ${data.legal_tone_ok ? 'OK' : 'Rivedere'}\\nIssues: ${(data.qa_issues || []).join(', ') || 'Nessuno'}\\nNote: ${data.reviewer_notes || ''}\\nSEO Warnings: ${(data.seo_warnings || []).join(', ') || 'Nessuno'}\\n-->`;\n// finalContent = finalContent + qaComment;\n\n// return [{\n//   json: {\n//     ...data,\n//     article_content: articleContent,  // ✅ Ensure article_content is set\n//     article_html: articleContent,      // ✅ Ensure article_html is set\n//     final_content: finalContent\n//   }\n// }];\n\n\n// ============================================================\n// APPEND LEGAL DISCLAIMER + BUILD FINAL CONTENT\n// ============================================================\nconst config = $('Workflow Config2').first().json;\nconst data = $input.first().json;\n\n// ✅ Get content from multiple sources\nlet articleContent = data.article_content || data.article_html || data.text || '';\n\n// If content is JSON string, parse it\nif (articleContent && typeof articleContent === 'string' && articleContent.trim().startsWith('{')) {\n  try {\n    const parsed = JSON.parse(articleContent);\n    articleContent = parsed.article_content || parsed.article_html || articleContent;\n  } catch(e) {\n    // Not valid JSON, use as is\n  }\n}\n\n// ✅ ULTIMATE FALLBACK\nif (!articleContent || articleContent.trim() === '') {\n  articleContent = '<p>⚠️ Contenuto articolo non disponibile. Verificare il workflow.</p>';\n}\n\n// Legal disclaimer\nconst disclaimer = `\n<div class=\"legal-disclaimer\" style=\"background:#f8f9fa;border-left:4px solid #6c757d;padding:16px 20px;margin:32px 0;border-radius:0 4px 4px 0;\">\n  <p style=\"margin:0;font-size:0.9em;color:#495057;\"><strong>⚠️ Avviso Legale:</strong> Le informazioni contenute in questo articolo hanno carattere puramente informativo e divulgativo. Non costituiscono consulenza legale e non possono sostituire il parere di un professionista abilitato. Ogni caso è unico e richiede una valutazione individuale. Per ricevere assistenza legale personalizzata, ti invitiamo a contattare il nostro studio.</p>\n</div>`;\n\nlet finalContent = articleContent;\n\n// Check if disclaimer already exists\nif (!finalContent.includes('class=\"legal-disclaimer\"')) {\n  finalContent = finalContent + disclaimer;\n}\n\n// ✅ FIX 1: Corretta traduzione di \"future\" (Replace \"contratti a termine\" con \"futuro\")\n// ➡️ THIS IS THE ONLY CHANGE MADE TO YOUR SUCCESSFUL CODE\nfinalContent = finalContent.replace(/contratti a termine/g, 'futuro');\n\n// Build FAQ schema markup for SEO\nlet faqSchema = '';\nif (Array.isArray(data.faq) && data.faq.length > 0) {\n  const schemaFaq = {\n    \"@context\": \"https://schema.org\",\n    \"@type\": \"FAQPage\",\n    \"mainEntity\": data.faq.map(f => ({\n      \"@type\": \"Question\",\n      \"name\": f.question,\n      \"acceptedAnswer\": { \"@type\": \"Answer\", \"text\": f.answer }\n    }))\n  };\n  faqSchema = `\\n<script type=\"application/ld+json\">${JSON.stringify(schemaFaq, null, 2)}</script>`;\n  finalContent = finalContent + faqSchema;\n}\n\n// ✅ FIX 2: QA reviewer notes — build as plain string for internal logging,\n// do NOT append to finalContent anymore (this was leaking into WordPress\n// post_content as a raw HTML comment). finalContent is now clean.\nconst qaComment = `Score: ${data.quality_score || 'N/A'}/10 | Legal Tone: ${data.legal_tone_ok ? 'OK' : 'Rivedere'} | Issues: ${(data.qa_issues || []).join(', ') || 'Nessuno'} | Note: ${data.reviewer_notes || ''} | SEO Warnings: ${(data.seo_warnings || []).join(', ') || 'Nessuno'}`;\n// (removed: finalContent = finalContent + qaComment;)\n\nreturn [{\n  json: {\n    ...data,\n    article_content: articleContent,  // ✅ Ensure article_content is set\n    article_html: articleContent,      // ✅ Ensure article_html is set\n    final_content: finalContent,       // ✅ Now clean — no QA comment leaked into WP content\n    qa_comment: qaComment              // ✅ New field — available for Sheets logging, not in published content\n  }\n}];"
+      },
+      "id": "bc1259df-edad-4b09-98c8-625667ffadb9",
+      "name": "Append Disclaimer + Build Final Content",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        7584,
+        5520
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ Object.keys($binary || {}).length > 0 }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "20192c68-9807-4b8c-9b43-10e1b853ca75",
+      "name": "Image Generated OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        8016,
+        5808
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$('Workflow Config2').first().json.wordpress_url}}/wp-json/wp/v2/media",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Disposition",
+              "value": "=attachment; filename=\"seo-legal-{{$now.format('YYYY-MM-DD')}}.png\""
+            },
+            {
+              "name": "Content-Type",
+              "value": "image/png"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "binaryData",
+        "inputDataFieldName": "data",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "ff4ab58c-dcbc-4195-9e47-122e5a32b43c",
+      "name": "WordPress - Upload Image",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        8368,
+        5968
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_CREDENTIAL_NAME"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Image uploaded successfully - extract media ID\nconst articleData = $('Append Disclaimer + Build Final Content').first().json;\nconst uploadResult = $input.first().json;\n\nconst mediaId = uploadResult.id || null;\nconst mediaUrl = uploadResult.source_url || null;\n\nreturn [{\n  json: {\n    ...articleData,\n    featured_image_id: mediaId,\n    featured_image_url: mediaUrl,\n    image_upload_success: !!mediaId\n  }\n}];"
+      },
+      "id": "45609317-3ae8-4947-8c9d-e752adfd9ab9",
+      "name": "Set Image ID - Success",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        8832,
+        6240
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Image generation or download failed - continue without image\nconst articleData = $('Append Disclaimer + Build Final Content').first().json;\n\nreturn [{\n  json: {\n    ...articleData,\n    featured_image_id: null,\n    featured_image_url: null,\n    image_upload_success: false,\n    image_skip_reason: 'Image generation failed - draft created without featured image'\n  }\n}];"
+      },
+      "id": "e7af2806-dbff-49dd-81bb-41f145a1b996",
+      "name": "Set Image ID - No Image",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        8464,
+        6496
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{$('Workflow Config2').first().json.wordpress_url}}/wp-json/wp/v2/posts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "application/json",
+        "body": "={{$json.post_body_json}}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "df96b290-9189-4bff-a223-1fd899400559",
+      "name": "WordPress - Create Draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        9488,
+        7008
+      ],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_CREDENTIAL_NAME"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{$json.id.toString()}}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "exists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "eadafcec-5023-4599-a900-e3619b849da7",
+      "name": "Draft Created OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        9712,
+        7216
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// // Extract WordPress draft post details\n// // Safety check: ensure status is 'draft' (never publish)\n// const wpResponse = $input.first().json;\n// const buildData = $('Build WordPress Post Body1').first().json;\n// const config = $('Workflow Config2').first().json;\n\n// const postId = wpResponse.id;\n// const postStatus = wpResponse.status;\n\n// // CRITICAL SAFETY CHECK\n// if (postStatus && postStatus !== 'draft') {\n//   throw new Error(`SICUREZZA: Il post è stato creato con status '${postStatus}' invece di 'draft'. Verificare immediatamente su WordPress e non pubblicare. Post ID: ${postId}`);\n// }\n\n// const draftEditUrl = `${config.wordpress_url}/wp-admin/post.php?post=${postId}&action=edit`;\n// const draftPreviewUrl = `${config.wordpress_url}/?p=${postId}&preview=true`;\n\n// return [{\n//   json: {\n//     post_id: postId,\n//     post_status: postStatus,\n//     draft_edit_url: draftEditUrl,\n//     draft_preview_url: draftPreviewUrl,\n//     article_title: buildData.article_title,\n//     selected_keyword: buildData.selected_keyword,\n//     word_count: buildData.word_count,\n//     quality_score: buildData.quality_score,\n//     reviewer_notes: buildData.reviewer_notes,\n//     image_upload_success: buildData.image_upload_success,\n//     seo_warnings: buildData.seo_warnings,\n//     qa_issues: buildData.qa_issues,\n//     topic_label: buildData.topic_label,\n//     meta_title: buildData.meta_title,\n//     meta_description: buildData.meta_description,\n//     slug: buildData.slug,\n//     created_at: new Date().toISOString()\n//   }\n// }];\n\n// Extract WordPress draft post details\nconst wpResponse = $input.first().json;\nconst buildData = $('Build WordPress Post Body1').first().json;\nconst qaData = $('Process QA Review Result').first().json; // <-- আসল node-নাম বসাও (validator/QA node যেখানে word_count, quality_score আছে)\nconst config = $('Workflow Config2').first().json;\n\nconst postId = wpResponse.id;\nconst postStatus = wpResponse.status;\n\nif (postStatus && postStatus !== 'draft') {\n  throw new Error(`SICUREZZA: Il post è stato creato con status '${postStatus}' invece di 'draft'. Verificare immediatamente su WordPress e non pubblicare. Post ID: ${postId}`);\n}\n\nconst draftEditUrl = `${config.wordpress_url}/wp-admin/post.php?post=${postId}&action=edit`;\nconst draftPreviewUrl = `${config.wordpress_url}/?p=${postId}&preview=true`;\n\nreturn [{\n  json: {\n    post_id: postId,\n    post_status: postStatus,\n    draft_edit_url: draftEditUrl,\n    draft_preview_url: draftPreviewUrl,\n    article_title: buildData.article_title,\n    selected_keyword: qaData.selected_keyword ?? null,\n    word_count: qaData.word_count ?? null,\n    quality_score: qaData.quality_score ?? null,\n    reviewer_notes: qaData.reviewer_notes ?? null,\n    image_upload_success: buildData.image_upload_success ?? null,\n    seo_warnings: qaData.seo_warnings ?? null,\n    qa_issues: qaData.qa_issues ?? null,\n    topic_label: qaData.topic_label ?? null,\n    meta_title: buildData.meta_title,\n    meta_description: buildData.meta_description,\n    slug: buildData.slug,\n    created_at: new Date().toISOString()\n  }\n}];\n"
+      },
+      "id": "c831180f-29a2-4c2e-b8d7-8cc2089e040c",
+      "name": "Extract Draft Details",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        9968,
+        7280
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "append",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 161838625,
+          "mode": "list",
+          "cachedResultName": "Draft_Logs",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Date": "={{ $now.setZone('Europe/Rome').format('dd/MM/yyyy HH:mm:ss') }}",
+            "Keyword": "={{ $('Code in JavaScript5').first().json.search_terms_used[0] }},{{ $('Code in JavaScript5').first().json.search_terms_used[1] }},{{ $('Code in JavaScript5').first().json.search_terms_used[2] }},{{ $('Code in JavaScript5').first().json.search_terms_used[3] }},{{ $('Code in JavaScript5').first().json.search_terms_used[4] }},\n\n\n\n\n",
+            "Post Title": "={{ $json.article_title }}",
+            "Post ID": "={{ $json.post_id }}",
+            "Draft Edit URL": "={{ $json.draft_edit_url }}",
+            "Draft Preview URL": "={{ $json.draft_preview_url }}",
+            "Status": "={{ $json.post_status }}",
+            "Word Count": "={{ $json.word_count }}",
+            "Quality Score": "={{ $json.quality_score }}",
+            "Image Uploaded": "={{ $('Set Image ID - Success').item.json.image_upload_success }}",
+            "Reviewer Notes": "={{ $json.reviewer_notes }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "Date",
+              "displayName": "Date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Keyword",
+              "displayName": "Keyword",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Post Title",
+              "displayName": "Post Title",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Post ID",
+              "displayName": "Post ID",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Draft Edit URL",
+              "displayName": "Draft Edit URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Draft Preview URL",
+              "displayName": "Draft Preview URL",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Word Count",
+              "displayName": "Word Count",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Quality Score",
+              "displayName": "Quality Score",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Image Uploaded",
+              "displayName": "Image Uploaded",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Reviewer Notes",
+              "displayName": "Reviewer Notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "9c0b8eed-e758-439a-847d-deb8b1d989fb",
+      "name": "Sheets - Log Draft",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        10208,
+        7424
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_CREDENTIAL_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 705350307,
+          "mode": "list",
+          "cachedResultName": "Studio_Legale_YourFirm_Topics",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "Status": "Done",
+            "Last Used": "={{ $now.setZone('Europe/Rome').format('dd/MM/yyyy HH:mm:ss') }}",
+            "Used Keyword": "={{ $('Sheets - Log Draft').item.json.Keyword }}",
+            "row_number": "={{ $json.row_number }}",
+            "Topic": "={{ $json.Topic }}"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "Topic",
+              "displayName": "Topic",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Last Used",
+              "displayName": "Last Used",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "Used Keyword",
+              "displayName": "Used Keyword",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "3a7e66ad-2e4c-4d61-bae6-c7f866c6e33a",
+      "name": "Sheets - Log Used Keyword",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.4,
+      "position": [
+        10896,
+        7392
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_CREDENTIAL_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\n// // Select Best Legal Keyword1\n\n// const webhookData = $input.first().json;\n// const body = webhookData.body;\n\n// if (!body) {\n//   return [{ json: { error: 'No body in webhook payload' } }];\n// }\n\n// const topic = body.topic || '';\n\n// // --- Parse keywords: comes in as Python repr string, not JSON ---\n// let rawKeywords = body.keywords;\n\n// if (typeof rawKeywords === 'string') {\n//   try {\n//     rawKeywords = new Function('return ' + rawKeywords)();\n//   } catch (e) {\n//     return [{\n//       json: {\n//         error: 'Failed to parse keywords string',\n//         parse_error: e.message,\n//         raw_snippet: String(body.keywords).slice(0, 300)\n//       }\n//     }];\n//   }\n// } else if (!Array.isArray(rawKeywords)) {\n//   rawKeywords = [];\n// }\n\n// if (!rawKeywords.length) {\n//   return [{ json: { error: 'No keywords found', topic } }];\n// }\n\n// // --- Number parsing helpers (Italian/European format) ---\n// function parseVolume(v) {\n//   if (v === undefined || v === null) return 0;\n//   const cleaned = String(v).trim().replace(/\\./g, '').replace(/[^\\d]/g, '');\n//   return cleaned ? parseInt(cleaned, 10) : 0;\n// }\n\n// function parseCpc(v) {\n//   if (v === undefined || v === null) return 0;\n//   let s = String(v).trim().replace(/[€\\s]/g, '');\n//   if (s.includes(',')) {\n//     s = s.replace(/\\./g, '').replace(',', '.');\n//   }\n//   const n = parseFloat(s);\n//   return isNaN(n) ? 0 : n;\n// }\n\n// // --- Normalize key for dedup: lowercase, strip accents, collapse spaces, strip trailing apostrophes ---\n// function normalizeKey(str) {\n//   return String(str)\n//     .toLowerCase()\n//     .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '') // strip accents (à->a, è->e etc)\n//     .replace(/['']/g, '')      // strip apostrophes (malasanita' == malasanita)\n//     .replace(/\\s+/g, ' ')\n//     .trim();\n// }\n\n// // --- Normalize + filter valid (volume > 0) ---\n// const normalized = rawKeywords\n//   .map(k => ({\n//     keyword: (k.keyword || '').trim(),\n//     search_volume: parseVolume(k.search_volume),\n//     cpc: parseCpc(k.cpc)\n//   }))\n//   .filter(k => k.keyword && k.search_volume > 0);\n\n// // --- Dedup: same normalized keyword -> keep only highest-volume entry ---\n// const dedupMap = new Map();\n// for (const k of normalized) {\n//   const nk = normalizeKey(k.keyword);\n//   const existing = dedupMap.get(nk);\n//   if (!existing || k.search_volume > existing.search_volume) {\n//     dedupMap.set(nk, k);\n//   }\n// }\n// const validKeywords = Array.from(dedupMap.values());\n\n// if (!validKeywords.length) {\n//   return [{\n//     json: {\n//       error: 'No keywords with volume > 0 found',\n//       total_keywords: rawKeywords.length,\n//       topic\n//     }\n//   }];\n// }\n\n// // --- Sort strictly by search_volume desc ---\n// validKeywords.sort((a, b) => b.search_volume - a.search_volume);\n\n// const top5 = validKeywords.slice(0, 5);\n// const best = top5[0];\n\n// const fmtCpc = n => n.toFixed(2).replace('.', ',');\n\n// const top5Formatted = top5.map(k => ({\n//   keyword: k.keyword,\n//   search_volume: k.search_volume,\n//   cpc: fmtCpc(k.cpc)\n// }));\n\n// return [{\n//   json: {\n//     topic,\n//     selected_keyword: best.keyword,\n//     keyword_volume: best.search_volume,\n//     keyword_cpc: fmtCpc(best.cpc),\n//     article_topic: best.keyword,\n//     selected_keywords_5: top5.map(k => k.keyword),\n//     total_keywords_found: rawKeywords.length,\n//     total_valid_keywords: validKeywords.length,\n//     duplicates_removed: normalized.length - validKeywords.length,\n//     top_keywords: top5Formatted,\n//     keyword_1: top5Formatted[0] || null,\n//     keyword_2: top5Formatted[1] || null,\n//     keyword_3: top5Formatted[2] || null,\n//     keyword_4: top5Formatted[3] || null,\n//     keyword_5: top5Formatted[4] || null\n//   }\n// }];\n\n\n\n\n\n\n\n\n\n// // --- Read directly from upstream Code node output (no webhook/.body anymore) ---\n// const item = $input.first().json;\n\n// // --- Recursively collect all {topic, keywords} objects, wherever they live ---\n// function collectExtractedInfo(obj) {\n//   let results = [];\n//   if (Array.isArray(obj)) {\n//     for (const o of obj) results.push(...collectExtractedInfo(o));\n//     return results;\n//   }\n//   if (obj && typeof obj === 'object') {\n//     if (Array.isArray(obj.extracted_information)) {\n//       for (const ei of obj.extracted_information) {\n//         if (ei && typeof ei === 'object') results.push(ei);\n//       }\n//     }\n//     for (const key of Object.keys(obj)) {\n//       if (/^block_\\d+_output$/.test(key) && obj[key] && typeof obj[key] === 'object') {\n//         results.push(...collectExtractedInfo(obj[key]));\n//       }\n//     }\n//   }\n//   return results;\n// }\n\n// const infoList = collectExtractedInfo(item);\n\n// // --- Fallback: maybe topic/keywords sit directly on the root item ---\n// if (!infoList.length && (item.topic || item.keywords)) {\n//   infoList.push({ topic: item.topic, keywords: item.keywords });\n// }\n\n// const topic = (infoList.find(i => i.topic)?.topic) || item.topic || '';\n\n// // --- Flatten keywords from all found blocks, parsing python-repr string if needed ---\n// let rawKeywords = [];\n// for (const info of infoList) {\n//   let kw = info.keywords;\n//   if (typeof kw === 'string') {\n//     try {\n//       kw = new Function('return ' + kw)();\n//     } catch (e) {\n//       continue; // skip unparsable block, don't kill whole run\n//     }\n//   }\n//   if (Array.isArray(kw)) rawKeywords.push(...kw);\n// }\n\n// // --- Number parsing helpers (Italian/European format) ---\n// function parseVolume(v) {\n//   if (v === undefined || v === null) return 0;\n//   const cleaned = String(v).trim().replace(/\\./g, '').replace(/[^\\d]/g, '');\n//   return cleaned ? parseInt(cleaned, 10) : 0;\n// }\n// function parseCpc(v) {\n//   if (v === undefined || v === null) return 0;\n//   let s = String(v).trim().replace(/[€\\s]/g, '');\n//   if (s.includes(',')) s = s.replace(/\\./g, '').replace(',', '.');\n//   const n = parseFloat(s);\n//   return isNaN(n) ? 0 : n;\n// }\n\n// // --- Normalize key for dedup: lowercase, strip accents, strip apostrophes, collapse spaces ---\n// function normalizeKey(str) {\n//   return String(str)\n//     .toLowerCase()\n//     .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')\n//     .replace(/['']/g, '')\n//     .replace(/\\s+/g, ' ')\n//     .trim();\n// }\n\n// const fmtCpc = n => n.toFixed(2).replace('.', ',');\n\n// // --- Normalize + filter valid (volume > 0) ---\n// const normalized = rawKeywords\n//   .map(k => ({\n//     keyword: (k.keyword || '').trim(),\n//     search_volume: parseVolume(k.search_volume),\n//     cpc: parseCpc(k.cpc)\n//   }))\n//   .filter(k => k.keyword && k.search_volume > 0);\n\n// // --- Dedup: same normalized keyword -> keep highest-volume entry ---\n// const dedupMap = new Map();\n// for (const k of normalized) {\n//   const nk = normalizeKey(k.keyword);\n//   const existing = dedupMap.get(nk);\n//   if (!existing || k.search_volume > existing.search_volume) dedupMap.set(nk, k);\n// }\n// const validKeywords = Array.from(dedupMap.values());\n\n// // --- No valid keywords: return blank/fallback-ready shape instead of hard error ---\n// if (!validKeywords.length) {\n//   return [{\n//     json: {\n//       topic,\n//       needs_fallback: true,\n//       selected_keyword: '',\n//       keyword_volume: 0,\n//       keyword_cpc: '',\n//       article_topic: topic, // let LLM fallback still know the topic to write about\n//       selected_keywords_5: [],\n//       total_keywords_found: rawKeywords.length,\n//       total_valid_keywords: 0,\n//       duplicates_removed: 0,\n//       top_keywords: [],\n//       keyword_1: null,\n//       keyword_2: null,\n//       keyword_3: null,\n//       keyword_4: null,\n//       keyword_5: null\n//     }\n//   }];\n// }\n\n// // --- Sort strictly by search_volume desc, take up to top 5 (works fine even if only 1 exists) ---\n// validKeywords.sort((a, b) => b.search_volume - a.search_volume);\n// const top5 = validKeywords.slice(0, 5);\n// const best = top5[0];\n// const top5Formatted = top5.map(k => ({\n//   keyword: k.keyword,\n//   search_volume: k.search_volume,\n//   cpc: fmtCpc(k.cpc)\n// }));\n\n// return [{\n//   json: {\n//     topic,\n//     needs_fallback: false,\n//     selected_keyword: best.keyword,\n//     keyword_volume: best.search_volume,\n//     keyword_cpc: fmtCpc(best.cpc),\n//     article_topic: best.keyword,\n//     selected_keywords_5: top5.map(k => k.keyword),\n//     total_keywords_found: rawKeywords.length,\n//     total_valid_keywords: validKeywords.length,\n//     duplicates_removed: normalized.length - validKeywords.length,\n//     top_keywords: top5Formatted,\n//     keyword_1: top5Formatted[0] || null,\n//     keyword_2: top5Formatted[1] || null,\n//     keyword_3: top5Formatted[2] || null,\n//     keyword_4: top5Formatted[3] || null,\n//     keyword_5: top5Formatted[4] || null\n//   }\n// }];\n\n\n\n\n\n\n\n\n\n// --- Read directly from upstream Code node output (no webhook/.body anymore) ---\nconst item = $input.first().json;\n\n// --- Recursively collect all {topic, keywords} objects, wherever they live ---\nfunction collectExtractedInfo(obj) {\n  let results = [];\n  if (Array.isArray(obj)) {\n    for (const o of obj) results.push(...collectExtractedInfo(o));\n    return results;\n  }\n  if (obj && typeof obj === 'object') {\n    if (Array.isArray(obj.extracted_information)) {\n      for (const ei of obj.extracted_information) {\n        if (ei && typeof ei === 'object') results.push(ei);\n      }\n    }\n    for (const key of Object.keys(obj)) {\n      if (/^block_\\d+_output$/.test(key) && obj[key] && typeof obj[key] === 'object') {\n        results.push(...collectExtractedInfo(obj[key]));\n      }\n    }\n  }\n  return results;\n}\n\nconst infoList = collectExtractedInfo(item);\n\n// --- Fallback: maybe topic/keywords sit directly on the root item ---\nif (!infoList.length && (item.topic || item.keywords)) {\n  infoList.push({ topic: item.topic, keywords: item.keywords });\n}\n\nconst topic = (infoList.find(i => i.topic)?.topic) || item.topic || '';\n\n// --- Flatten keywords from all found blocks, parsing python-repr string if needed ---\nlet rawKeywords = [];\nfor (const info of infoList) {\n  let kw = info.keywords;\n  if (typeof kw === 'string') {\n    try {\n      kw = new Function('return ' + kw)();\n    } catch (e) {\n      continue; // skip unparsable block, don't kill whole run\n    }\n  }\n  if (Array.isArray(kw)) rawKeywords.push(...kw);\n}\n\n// --- Number parsing helpers (Italian/European format) ---\nfunction parseVolume(v) {\n  if (v === undefined || v === null) return 0;\n  const cleaned = String(v).trim().replace(/\\./g, '').replace(/[^\\d]/g, '');\n  return cleaned ? parseInt(cleaned, 10) : 0;\n}\nfunction parseCpc(v) {\n  if (v === undefined || v === null) return 0;\n  let s = String(v).trim().replace(/[€\\s]/g, '');\n  if (s.includes(',')) s = s.replace(/\\./g, '').replace(',', '.');\n  const n = parseFloat(s);\n  return isNaN(n) ? 0 : n;\n}\n\n// --- Normalize key for dedup: lowercase, strip accents, strip apostrophes, collapse spaces ---\nfunction normalizeKey(str) {\n  return String(str)\n    .toLowerCase()\n    .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')\n    .replace(/['']/g, '')\n    .replace(/\\s+/g, ' ')\n    .trim();\n}\n\nconst fmtCpc = n => n.toFixed(2).replace('.', ',');\n\n// --- Normalize + keep ALL keywords with non-empty text (volume 0 allowed) ---\n// Also drop obvious junk entries that are URLs, not keywords\nconst normalized = rawKeywords\n  .map(k => ({\n    keyword: (k.keyword || '').trim(),\n    search_volume: parseVolume(k.search_volume),\n    cpc: parseCpc(k.cpc)\n  }))\n  .filter(k => k.keyword && !/^https?:\\/\\//i.test(k.keyword));\n\n// --- Dedup: same normalized keyword -> keep highest-volume entry ---\nconst dedupMap = new Map();\nfor (const k of normalized) {\n  const nk = normalizeKey(k.keyword);\n  const existing = dedupMap.get(nk);\n  if (!existing || k.search_volume > existing.search_volume) dedupMap.set(nk, k);\n}\nconst validKeywords = Array.from(dedupMap.values());\n\n// --- No keywords at all: fallback-ready blank shape ---\nif (!validKeywords.length) {\n  return [{\n    json: {\n      topic,\n      needs_fallback: true,\n      selected_keyword: '',\n      keyword_volume: 0,\n      keyword_cpc: '',\n      article_topic: topic,\n      selected_keywords_5: [],\n      total_keywords_found: rawKeywords.length,\n      total_valid_keywords: 0,\n      duplicates_removed: 0,\n      top_keywords: [],\n      keyword_1: null,\n      keyword_2: null,\n      keyword_3: null,\n      keyword_4: null,\n      keyword_5: null\n    }\n  }];\n}\n\n// --- Sort strictly by search_volume desc, take top 5 regardless of volume ---\nvalidKeywords.sort((a, b) => b.search_volume - a.search_volume);\nconst top5 = validKeywords.slice(0, 5);\nconst best = top5[0];\nconst top5Formatted = top5.map(k => ({\n  keyword: k.keyword,\n  search_volume: k.search_volume,\n  cpc: fmtCpc(k.cpc)\n}));\n\nreturn [{\n  json: {\n    topic,\n    needs_fallback: false,\n    selected_keyword: best.keyword,\n    keyword_volume: best.search_volume,\n    keyword_cpc: fmtCpc(best.cpc),\n    article_topic: best.keyword,\n    selected_keywords_5: top5.map(k => k.keyword),\n    total_keywords_found: rawKeywords.length,\n    total_valid_keywords: validKeywords.length,\n    duplicates_removed: normalized.length - validKeywords.length,\n    top_keywords: top5Formatted,\n    keyword_1: top5Formatted[0] || null,\n    keyword_2: top5Formatted[1] || null,\n    keyword_3: top5Formatted[2] || null,\n    keyword_4: top5Formatted[3] || null,\n    keyword_5: top5Formatted[4] || null\n  }\n}];"
+      },
+      "id": "85ce62d8-8942-4871-b29e-89d8d92d2182",
+      "name": "Select Best Legal Keyword1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2512,
+        2720
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// const config = $('Workflow Config').first().json;\n// const data = $input.first().json;\n\n// // ✅ ১. INপুট থেকে H1 ট্যাগ খুঁজে বের করার লজিক (এটাই মূল ফিক্স)\n// const contentToSearch = data.article_content || data.final_content || '';\n// const h1Match = contentToSearch.match(/<h1[^>]*>(.*?)<\\/h1>/i);\n// const extractedTitle = h1Match ? h1Match[1].trim() : 'Articolo senza titolo';\n\n// // ✅ ২. স্লাগ (Slug) তৈরি করার জন্য এই সঠিক টাইটেলটি ব্যবহার করা\n// const slugSource = data.slug || extractedTitle || 'articolo-senza-titolo';\n// const cleanSlug = slugSource\n//   .toLowerCase()\n//   .normalize('NFD')\n//   .replace(/[\\u0300-\\u036f]/g, '')\n//   .replace(/[^a-z0-9]+/g, '-')\n//   .replace(/^-|-$/g, '')\n//   .substring(0, 80) || 'articolo-senza-slug';\n\n// // ✅ ৩. সঠিক টাইটেল সেট করা (আগে ছিল data.title, এখন হবে extractedTitle)\n// const articleTitle = extractedTitle; \n\n// // ✅ ৪. কন্টেন্ট\n// const articleContent = data.final_content || data.article_content || '<p>Contenuto non disponibile</p>';\n\n// // ✅ ৫. এক্সসার্প্ট ও মেটা ডেটা তৈরি\n// const articleExcerpt = data.excerpt || data.meta_description || '';\n// const metaTitle = data.meta_title || articleTitle;\n// const metaDescription = data.meta_description || articleExcerpt || articleTitle;\n// const focusKeyword = data.selected_keyword || '';\n\n// // ✅ ৬. পোস্ট বডি বিল্ড করা\n// const postBody = {\n//   title: articleTitle, // এখানে সঠিক টাইটেল বসছে\n//   content: articleContent,\n//   status: 'draft',\n//   slug: cleanSlug,\n//   excerpt: articleExcerpt,\n//   meta: {\n//     _yoast_wpseo_title: metaTitle,\n//     _yoast_wpseo_metadesc: metaDescription,\n//     _yoast_wpseo_focuskw: focusKeyword,\n//     rank_math_title: metaTitle,\n//     rank_math_description: metaDescription,\n//     rank_math_focus_keyword: focusKeyword,\n//     _seo_automation_keyword: focusKeyword,\n//     _seo_automation_word_count: String(data.word_count || ''),\n//     _seo_automation_quality_score: String(data.quality_score || ''),\n//     _seo_automation_date: new Date().toISOString()\n//   }\n// };\n\n// // Add featured image if exists\n// if (data.featured_image_id) {\n//   postBody.featured_media = data.featured_image_id;\n// }\n\n// return [{\n//   json: {\n//     post_body_json: JSON.stringify(postBody),\n//     article_title: articleTitle,\n//     selected_keyword: focusKeyword,\n//     word_count: data.word_count || 0,\n//     quality_score: data.quality_score || 0,\n//     reviewer_notes: data.reviewer_notes || '',\n//     image_upload_success: data.image_upload_success || false,\n//     featured_image_id: data.featured_image_id || null,\n//     seo_warnings: data.seo_warnings || [],\n//     qa_issues: data.qa_issues || [],\n//     topic_label: data.topic_label || '',\n//     meta_title: metaTitle,\n//     meta_description: metaDescription,\n//     slug: cleanSlug,\n//     excerpt: articleExcerpt\n//   }\n// }];\n\n\n\nconst config = $('Workflow Config2').first().json;\nconst data = $input.first().json;\n\n// ✅ ১. ফাইনাল কনটেন্ট নেওয়া এবং শুরুতে ভুল শব্দ রিপ্লেস করা (এক্সট্রা সুরক্ষা)\nlet finalArticleContent = data.final_content || data.article_content || '';\nfinalArticleContent = finalArticleContent.replace(/contratti a termine/g, 'futuro');\n\n// ✅ ২. <h1> খুঁজে টাইটেল বের করা\nconst h1Match = finalArticleContent.match(/<h1[^>]*>(.*?)<\\/h1>/i);\nconst extractedTitle = h1Match ? h1Match[1].trim() : 'Articolo senza titolo';\n\n// ✅ ৩. Slug তৈরি করা\nconst cleanSlug = extractedTitle\n  .toLowerCase()\n  .normalize('NFD')\n  .replace(/[\\u0300-\\u036f]/g, '')\n  .replace(/[^a-z0-9]+/g, '-')\n  .replace(/^-|-$/g, '')\n  .substring(0, 80) || 'articolo-senza-slug';\n\n// ✅ ৪. মেটা ডেটা সেট করা\nconst metaTitle = extractedTitle; \n\n// ✅ ৫. পরিষ্কার মেটা ডেসক্রিপশন তৈরি\nlet plainText = finalArticleContent.replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim();\n\n// মেটা ডেস্ক থেকে টাইটেল রিমুভ করা\nif (plainText.startsWith(extractedTitle)) {\n    plainText = plainText.substring(extractedTitle.length).trim();\n}\n\nconst metaDescription = plainText.substring(0, 155) + (plainText.length > 155 ? '...' : '');\nconst finalMetaDescription = metaDescription.length > 20 ? metaDescription : \"Tutte le informazioni su diritti, tutele e responsabilità dopo un infortunio sul lavoro.\";\n\n// ✅ ৬. পোস্ট বডি তৈরি\nconst postBody = {\n  title: extractedTitle,       \n  content: finalArticleContent, // ক্লিন করা কনটেন্ট\n  status: 'draft',\n  slug: cleanSlug,              \n  excerpt: finalMetaDescription,\n  meta: {\n    _yoast_wpseo_title: metaTitle,\n    _yoast_wpseo_metadesc: finalMetaDescription,\n    rank_math_title: metaTitle,\n    rank_math_description: finalMetaDescription,\n    _seo_automation_keyword: data.selected_keyword || '',\n    _seo_automation_date: new Date().toISOString()\n  }\n};\n\nif (data.featured_image_id) {\n  postBody.featured_media = data.featured_image_id;\n}\n\nreturn [{\n  json: {\n    post_body_json: JSON.stringify(postBody),\n    article_title: extractedTitle,\n    meta_title: metaTitle,\n    meta_description: finalMetaDescription,\n    slug: cleanSlug,\n    excerpt: finalMetaDescription\n  }\n}];"
+      },
+      "id": "fd863f92-8550-4f3c-896a-c1d4724ea3d5",
+      "name": "Build WordPress Post Body1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        9072,
+        6624
+      ]
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Sei un copywriter professionista specializzato nella comunicazione e promozione di servizi legali per studi legali italiani.\n\n=== ARGOMENTO E KEYWORD ===\nArgomento (keyword seed, NON è il titolo finale):\n{{ $json.topic }}\n\nIstruzione: genera un titolo SEO-friendly che includa la keyword principale in modo naturale, \nma NON usare la keyword da sola come titolo. Il titolo deve avere un angolo specifico e diverso \ndagli articoli già pubblicati elencati sotto.\n\n\nKeyword principale:\n{{ $json.topic }}\n\nKeyword SEO correlate:\n{{ $('Wait5').item.json.selected_keywords_5[1] }}\n{{ $('Wait5').item.json.selected_keywords_5[2] }}\n{{ $('Wait5').item.json.selected_keywords_5[3] }}\n{{ $('Wait5').item.json.selected_keywords_5[4] }}\n\nUtilizza la keyword principale come focus dell'articolo.\n\nIntegra le keyword SEO correlate solo quando sono pertinenti e naturali.\n\nEvita keyword stuffing, ripetizioni e contenuti artificiali.\n\nVolume di ricerca keyword principale:\n{{ $('Wait5').item.json.all_keywords[0].search_volume }}\n\n\n=== VERIFICA PRELIMINARE ===\nPrima di iniziare a scrivere, verifica che il titolo, l'argomento e le keyword principali non siano già stati utilizzati in altri articoli del sito. Evita sovrapposizioni, duplicazioni e contenuti che potrebbero competere dal punto di vista SEO con articoli già pubblicati.\n\nArticoli già pubblicati sul sito (NON duplicare titoli, argomenti o angolazioni già trattate; se pertinente suggerisci 1-2 link interni usando i titoli esatti sotto, senza inventare URL):\n\n{{ $('Code in JavaScript5').item.json.existing_posts_text }}\n\n\n=== REQUISITI OBBLIGATORI ===\n\nLINGUA:\n- Scrivi l'INTERO output esclusivamente in italiano fluente e grammaticalmente corretto (title, meta_title, meta_description, slug, excerpt, h1, article_html, faq, image_prompt).\n- Nessuna alternanza italiano/inglese. Se stai per scrivere una parola inglese, fermati e trova l'equivalente italiano (eccetto nomi propri, riferimenti normativi o termini latini standard del diritto italiano).\n- Prima di restituire la risposta finale, rileggi mentalmente l'intero testo e verifica che non ci sia nemmeno una parola in inglese.\n\nDEONTOLOGIA FORENSE:\n- Presenta il servizio in modo informativo, professionale e accurato, nel rispetto del Codice Deontologico Forense italiano.\n- Rispetta il divieto di accaparramento di clientela: informazioni veritiere, trasparenti, verificabili, non ingannevoli.\n- Non inventare leggi, sentenze, statistiche, fonti, testimonianze, nomi di clienti o risultati giudiziari.\n\nCONTENUTO E STILE:\n- Incorpora le 5 keyword in modo naturale, senza ripetizioni forzate.\n- Non duplicare keyword, titoli, paragrafi o argomenti già usati in altri articoli del sito.\n- Usa il corsivo (tag <em>) per evidenziare termini/concetti rilevanti anche dal punto di vista SEO.\n- Utilizzare il grassetto (tag <strong>) ove appropriato per enfatizzare concetti legali importanti, termini chiave e informazioni essenziali.\n- Includi link esterni autorevoli e pertinenti su riferimenti normativi o termini tecnici (usa tag <a href> verso fonti realmente esistenti e note, es. normattiva.it, gazzettaufficiale.it, camera.it; se non sei certo dell'URL esatto, ometti il link invece di inventarlo).\n- Aggiungi una sezione FAQ alla fine.\n- NON includere un paragrafo intitolato \"Conclusioni\" e NON usare formule di chiusura tipiche dei contenuti generati da IA (es. \"In conclusione\", \"Per concludere\", \"Speriamo che questo articolo...\").\n- Usa domande retoriche e call to action con moderazione.\n- Varia struttura e lunghezza delle frasi per un ritmo naturale.\n- Riconosci realisticamente dubbi e preoccupazioni del potenziale cliente.\n- Usa sinonimi e termini alternativi per arricchire il linguaggio ed evitare ripetizioni.\n- Dove opportuno, presenta osservazioni critiche, interpretazioni alternative o limiti, per un approccio equilibrato.\n- Includi esempi pratici o casi ipotetici realistici, SENZA inventare testimonianze, risultati professionali o casi di successo dello studio.\n- Rimuovi frasi ridondanti, ripetitive o poco informative.\n- Aggiungi frasi di transizione tra le sezioni.\n- Linguaggio diretto, professionale e coinvolgente, evitando toni eccessivamente promozionali.\n- Quando usi un acronimo, scrivi per esteso il termine completo alla prima occorrenza seguito dall'acronimo tra parentesi; evita di ripeterlo eccessivamente.\n- Almeno 1500 parole di corpo testo reale (esclusi i tag HTML), senza allungamenti artificiali o ripetizioni.\n- Organizza il contenuto con titolo principale, paragrafi, sottotitoli (almeno 4 sezioni H2) e testo in grassetto dove utile.\n- Evita espressioni, strutture e formule ricorrenti che rivelano l'origine artificiale del testo.\n- Svolgi una ricerca online sul tema utilizzando fonti italiane e internazionali autorevoli e aggiornate.\n- Rielabora le informazioni in modo originale e senza plagio, mantenendo però i riferimenti giuridici, istituzionali e giurisprudenziali necessari a garantire l'affidabilità dell'articolo.\n- Non inventare leggi, sentenze, statistiche, autorità, procedimenti o fonti.\n\nREGOLE DI MAIUSCOLE:\n- Maiuscola a inizio frase e dopo punto, punto interrogativo o esclamativo.\n- Maiuscola per nomi propri di persone, luoghi, istituzioni e festività.\n- Maiuscola per titoli onorifici solo se usati come nomi propri.\n- Acronimi in maiuscolo (es. UE, INPS, INAIL).\n- Nei titoli: maiuscola solo sulla prima parola e sui nomi propri.\n- Dopo i due punti, maiuscola solo se introduce discorso diretto o una frase indipendente.\n- Non mettere automaticamente la maiuscola alla prima parola di ogni punto elenco.\n\nSTRUTTURA OBBLIGATORIA DI article_html:\n- Un solo H1.\n- Almeno 4 sezioni H2, con H3 dove utile.\n- Un paragrafo dedicato di Call To Action verso la fine (prima della FAQ) che inviti esplicitamente il lettore a contattare lo studio legale, con indicazioni pratiche su quando è importante rivolgersi a un avvocato per questo argomento.\n- Dove pertinente, cita in modo naturale il ruolo dell'avvocato dello studio nella gestione di questa specifica materia (non genericamente, ma legato all'argomento/keyword).\n- NON includere alcun disclaimer legale nell'article_html: viene aggiunto automaticamente in seguito.\n\nPer \"image_prompt\", crea un prompt dettagliato per un'immagine in stile INFOGRAFICA (non una semplice fotografia). Deve specificare:\n- Un titolo breve e incisivo in italiano sovrapposto all'immagine (2-5 parole, in evidenza)\n- 2-3 icone/simboli pertinenti (bilancia della giustizia, martelletto, documenti legali, grafici, o icone specifiche per l'argomento)\n- Una scena illustrata centrale con un avvocato e un cliente o una situazione pertinente all'argomento, in stile semi-realistico illustrato (non cartone piatto, non foto pura)\n- Palette professionale calda: sfondo beige/crema, accenti blu navy, dettagli oro/ambra\n- Gerarchia visiva pulita: testo in alto o di lato, icone distribuite ai bordi, scena centrale\n- Formato landscape (16:9), adatto come immagine in evidenza per WordPress\n- Specifica esplicitamente: \"tutto il testo deve essere in italiano e scritto correttamente\"\n- EVITARE: stile foto stock generico, sfondi vuoti/minimali, scene generiche senza testo, stile cartone senza realismo\n\n=== VERIFICA FINALE ===\nDopo aver completato la bozza, effettua un controllo completo del testo:\n1. Verifica che l'articolo sia scritto interamente in italiano\n2. Controlla che non ci siano duplicazioni interne\n3. Verifica che le keyword siano state incorporate in modo naturale\n4. Controlla che il contenuto non si sovrapponga ad articoli già disponibili sul sito\n5. Correggi eventuali errori grammaticali, sintattici e lessicali\n6. Rendi il testo più naturale e umano rimuovendo formule artificiali\n7. Verifica l'accuratezza di tutti i riferimenti legali e le informazioni giuridiche\n8. Verifica che non siano state inventate testimonianze, fonti, sentenze o risultati\n9. Assicurati che l'articolo sia conforme al Codice Deontologico Forense italiano\n10. Genera un'immagine in evidenza pertinente al tema\n\nRestituisci SOLO JSON valido, nessun testo aggiuntivo, in questo formato:\n{\n\"title\": \"\",\n\"meta_title\": \"\",\n\"meta_description\": \"\",\n\"slug\": \"\",\n\"excerpt\": \"\",\n\"h1\": \"\",\n\"article_html\": \"\",\n\"faq\": [\n  {\n    \"question\": \"\",\n    \"answer\": \"\"\n  }\n],\n\"image_prompt\": \"\"\n}",
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        4000,
+        3616
+      ],
+      "id": "0334440e-9151-4579-8dd8-f7504f5f6734",
+      "name": "Basic LLM Chain"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-5.1",
+          "mode": "list",
+          "cachedResultName": "gpt-5.1"
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "json_object"
+            }
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        4096,
+        3776
+      ],
+      "id": "a665aad6-7f6c-4cdd-bd84-1fedff5e608c",
+      "name": "OpenAI Chat Model",
+      "credentials": {
+        "openAiApi": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_CREDENTIAL_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-5.1",
+          "mode": "list",
+          "cachedResultName": "gpt-5.1"
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "json_object"
+            }
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        5168,
+        4400
+      ],
+      "id": "c3702e42-cf95-4674-b08e-462eea834b3e",
+      "name": "OpenAI Chat Model1",
+      "credentials": {
+        "openAiApi": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_CREDENTIAL_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Rivedi questo articolo legale e fornisci la tua valutazione professionale.\n\nTitolo: {{$json.title}}\nKeyword: {{$json.selected_keyword}}\nParole: {{$json.word_count}}\nH2: {{$json.h2_count}}\nFAQ: {{$json.faq_count}}\n\nContenuto (primi 6000 caratteri):\n{{$json.article_content.substring(0, 6000)}}\n\nRispondi SOLO con questo JSON:\n{\"approved\": true, \"quality_score\": 8, \"seo_ok\": true, \"legal_tone_ok\": true, \"readability_ok\": true, \"structure_ok\": true, \"has_cta\": true, \"has_disclaimer_need\": false, \"word_count_ok\": true, \"issues\": [], \"improvements\": [], \"reviewer_notes\": \"\"}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "Sei un editor senior specializzato in contenuti legali italiani. Rispondi SOLO con JSON valido."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        5056,
+        4240
+      ],
+      "id": "7fbe413d-c2fd-423a-9a98-a09da0d87a70",
+      "name": "OpenAI - AI Quality Review1"
+    },
+    {
+      "parameters": {
+        "resource": "image",
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-image-1",
+          "mode": "list",
+          "cachedResultName": "GPT-IMAGE-1",
+          "cachedResultUrl": ""
+        },
+        "prompt": "={{$('Article Language OK?').first().json.image_prompt || 'Fotografia professionale di uno studio legale italiano.'}}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.3,
+      "position": [
+        7776,
+        5632
+      ],
+      "id": "05554aed-67d6-4bb0-8bb5-ecef7e3412a1",
+      "name": "Generate an image",
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 5000,
+      "credentials": {
+        "openAiApi": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_CREDENTIAL_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "your-email@example.com",
+        "subject": "=⚠️ SEO Automation ERRORE - Generazione articolo fallita",
+        "message": "=",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        4528,
+        4240
+      ],
+      "id": "5fd733bb-1933-4896-8a64-a9bf20dca53a",
+      "name": "Notify Admin - OpenAI Failure1",
+      "webhookId": "cb61a7de-e601-4bcb-8cf1-2815390388a3",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_CREDENTIAL_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "1dbdf7b7-0fe7-40ca-a0d4-8f47683b631e",
+              "name": "text",
+              "value": "=\n{{$json.text.replace(/\\\\n/g, '\\n')}}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        4512,
+        3648
+      ],
+      "id": "d36876a9-7d15-4cf4-aee5-6887bb21b0b4",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "content": "",
+        "height": 3040,
+        "width": 3990,
+        "color": "#482904"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        7168,
+        5136
+      ],
+      "typeVersion": 1,
+      "id": "02bc88d4-14f9-4431-8834-3096b085cf99",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "",
+        "height": 2688,
+        "width": 4886,
+        "color": "#0A3F03"
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        2272,
+        2544
+      ],
+      "typeVersion": 1,
+      "id": "2435ce30-3c91-4fea-9a77-7099a11025a6",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "3f877078-60ee-41e3-b52a-a687817cc6b2",
+              "leftValue": "={{$json.error}}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "notExists",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        4800,
+        4160
+      ],
+      "id": "3f220337-5f1f-40cf-ad50-e2df942850e7",
+      "name": "Article Language OK?"
+    },
+    {
+      "parameters": {
+        "sendTo": "your-email@example.com",
+        "subject": "=⚠️ SEO Automation ERRORE - Controllo lingua fallito",
+        "message": "=<div>Testo inglese rilevato. Keyword: {{ $('Select Best Legal Keyword1').item.json.selected_keyword || 'N/A' }} Errore: {{ $json.error?.message || 'Errore sconosciuto' }}</div>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        4960,
+        4544
+      ],
+      "id": "93824d23-57c9-4a28-a59c-b73ddc5b52ed",
+      "name": "Notify Admin - Language Check Failed",
+      "webhookId": "105051ce-18ac-4f06-b84a-a04feb0121cb",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_CREDENTIAL_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-5.1",
+          "mode": "list",
+          "cachedResultName": "gpt-5.1"
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "json_object"
+            }
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        5792,
+        4736
+      ],
+      "id": "490a2442-266b-4bfc-abfa-bdc08c5ac381",
+      "name": "OpenAI Chat Model2",
+      "credentials": {
+        "openAiApi": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_CREDENTIAL_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=\n\nSei un editor professionista con 20 anni di esperienza in giornalismo giuridico italiano. Il tuo compito è RISCIVERE COMPLETAMENTE l'articolo seguente, rendendolo INDISTINGUIBILE da un testo scritto da un essere umano.\n\n❌ VIETATO ASSOLUTAMENTE (elimina ogni occorrenza):\n- Frasi introduttive standard: \"Di seguito\", \"In questo articolo\", \"Vedremo\", \"Approfondiamo\", \"Verranno illustrate\", \"Si analizzerà\"\n- Transizioni da AI: \"Inoltre\", \"Infatti\", \"È importante sottolineare\", \"Va ricordato\", \"Si deve considerare\"\n- Conclusioni riassuntive: \"In conclusione\", \"Per concludere\", \"In sintesi\", \"Riassumendo\", \"Da quanto esposto emerge che\"\n- Strutture ripetitive: stesso schema soggetto-verbo-oggetto per più frasi consecutive\n- Frasi fatte: \"Costituisce un elemento fondamentale\", \"Rappresenta un aspetto cruciale\", \"Assume particolare rilevanza\"\n- Paragrafi che iniziano con: \"Un altro aspetto\", \"Un ulteriore profilo\", \"Non meno importante\"\n- Domande retoriche artificiali: \"Non è forse vero che...\", \"Come non ricordare...\"\n\n✅ OBBLIGATORIO INTRODURRE:\n- Almeno 3 domande dirette al lettore in punti diversi (naturali, non forzate)\n- Incisi e parentesi per commenti personali dell'autore (es. \"— cosa che molti trascurano —\")\n- Contrasti e sfumature (\"Tuttavia\", \"D'altro canto\", \"C'è però un rovescio della medaglia\", \"Attenzione, però\")\n- Esempi concreti con dati specifici (ma generici, non reali): \"Prendiamo il caso di un investitore che...\"\n- Variazione di lunghezza delle frasi: alcune brevissime (3-5 parole), altre lunghe e articolate\n- Inizio di alcuni paragrafi con: \"Ecco il punto:\", \"Proviamo a fare chiarezza:\", \"La domanda che molti si pongono è:\", \"Il problema si pone quando:\", \"Si può obiettare che...\"\n- Gergo colloquiale moderato: \"sul piatto\", \"mettere le mani avanti\", \"fare quadrato\", \"tenere gli occhi aperti\"\n\n🎯 OBIETTIVO FINALE:\nIl testo finale deve sembrare scritto da un avvocato-giornalista che ha profonda esperienza nella materia. Deve essere SCORREVOLE, VARIO, DIRETTO e CONVINCENTE. Il lettore deve dimenticarsi di star leggendo un contenuto generato.\n\n📋 STRUTTURA DA SEGUIRE:\n1. Mantieni TUTTE le informazioni legali e tecniche (inaccurate)\n2. Mantieni TUTTI i riferimenti normativi (CONSOB, MiFID, TUF, ecc.)\n3. Mantieni la disclaimer legale finale (NON modificare)\n4. Mantieni le FAQ inalterate (NON modificare)\n5. Riscrivi SOLO il corpo dell'articolo (article_html)\n\n🔴 REGOLA D'ORO:\nPrima di restituire, rileggi l'intero articolo e chiediti: \"Un lettore umano potrebbe accorgersi che è scritto da una IA?\" — Se la risposta è anche solo \"forse\", RISCRIVI TUTTO DA CAPO.\n\nRestituisci SOLO il seguente JSON valido, nient'altro:\n{\"article_html\": \"il contenuto HTML riscritto qui\"}\n\nARTICOLO ORIGINALE DA RISCIVERE:\n{{$json.article_content}}\n\nPROBLEMI RILEVATI (da correggere):\n{{JSON.stringify($json.qa_issues)}}\n\nNOTE AGGIUNTIVE:\n{{$json.reviewer_notes}}",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "Sei un editor senior specializzato in contenuti legali italiani. Rispondi SOLO con JSON valido."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        5696,
+        4512
+      ],
+      "id": "d6e08a99-5c36-4aaa-b5da-9759760c37d2",
+      "name": "Humanization LLM Chain"
+    },
+    {
+      "parameters": {
+        "jsCode": "const original = $('Process QA Review Result').first().json;\nconst humanized = $input.first().json;\n\nlet humanizedHtml = '';\ntry {\n  let content = humanized.text || '';\n  content = content.replace(/^```json\\s*/i, '').replace(/```\\s*$/i, '').trim();\n  const parsed = JSON.parse(content);\n  humanizedHtml = parsed.article_html || original.article_content;\n} catch(e) {\n  humanizedHtml = original.article_content;\n}\n\nreturn [{\n  json: {\n    ...original,\n    article_content: humanizedHtml,\n    humanization_applied: true\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5984,
+        4640
+      ],
+      "id": "ea1024c2-b8bc-4056-be66-ae168da501e6",
+      "name": "Apply Humanized Content"
+    },
+    {
+      "parameters": {
+        "sendTo": "your-email@example.com",
+        "subject": "=⚠️ SEO Automation - Immagine in evidenza mancante ({{ $json.selected_keyword || $json.topic_label || 'N/A' }})",
+        "message": "=<div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n  <h2 style=\"color: #c0392b;\">⚠️ Immagine in Evidenza Non Generata</h2>\n  <p>La bozza di oggi verrà creata SENZA immagine in evidenza. Motivo: {{ $json.image_skip_reason || 'generazione o upload immagine falliti dopo i tentativi automatici' }}.</p>\n  <table style=\"width: 100%; border-collapse: collapse; margin: 20px 0; border: 1px solid #eee;\">\n    <tr style=\"background-color: #fdf2f2;\">\n      <td style=\"padding: 10px; font-weight: bold; width: 40%;\">Data/Ora:</td>\n      <td style=\"padding: 10px;\">{{ $now.setZone('Europe/Rome').format('dd/MM/yyyy HH:mm:ss') }}</td>\n    </tr>\n    <tr>\n      <td style=\"padding: 10px; font-weight: bold;\">Titolo Articolo:</td>\n      <td style=\"padding: 10px;\">{{ $json.title || 'N/A' }}</td>\n    </tr>\n    <tr style=\"background-color: #fdf2f2;\">\n      <td style=\"padding: 10px; font-weight: bold;\">Keyword:</td>\n      <td style=\"padding: 10px;\">{{ $json.selected_keyword || 'N/A' }}</td>\n    </tr>\n  </table>\n  <p style=\"background-color: #fdf2f2; border-left: 4px solid #c0392b; padding: 12px 16px; margin: 20px 0;\">\n    ⚠️ <strong>Azione richiesta:</strong> caricare manualmente un'immagine in evidenza sulla bozza prima della pubblicazione.\n  </p>\n</div>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "6cc5499d-5084-42f6-82cf-00745902cd11",
+      "name": "Notify Admin - Image Missing",
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        8944,
+        7056
+      ],
+      "webhookId": "df8ecd5f-7474-4f40-b05c-a07f56dac796",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_CREDENTIAL_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "your-email@example.com",
+        "subject": "=⚠️ SEO Automation ERRORE - Bozza WordPress non creata",
+        "message": "=<div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n  <h2 style=\"color: #c0392b;\">⚠️ Errore: Bozza WordPress Non Creata</h2>\n  \n  <p>Il workflow di automazione contenuti ha riscontrato un errore durante la creazione della bozza su WordPress.</p>\n  \n  <table style=\"width: 100%; border-collapse: collapse; margin: 20px 0; border: 1px solid #eee;\">\n    <tr style=\"background-color: #fdf2f2;\">\n      <td style=\"padding: 10px; font-weight: bold; width: 40%;\">Data/Ora:</td>\n      <td style=\"padding: 10px;\">{{ $now.setZone('Europe/Rome').format('dd/MM/yyyy HH:mm:ss') }}</td>\n    </tr>\n    <tr>\n      <td style=\"padding: 10px; font-weight: bold;\">Codice Errore:</td>\n      <td style=\"padding: 10px; color: #c0392b; font-weight: bold;\">{{ $json.error?.status || 'N/A' }}</td>\n    </tr>\n    <tr style=\"background-color: #fdf2f2;\">\n      <td style=\"padding: 10px; font-weight: bold;\">Messaggio:</td>\n      <td style=\"padding: 10px; color: #c0392b;\">{{ $json.error?.message || 'Errore sconosciuto' }}</td>\n    </tr>\n    <tr>\n      <td style=\"padding: 10px; font-weight: bold;\">Tipo Errore:</td>\n      <td style=\"padding: 10px;\">{{ $json.error?.name || 'N/A' }}</td>\n    </tr>\n    <tr style=\"background-color: #fdf2f2;\">\n      <td style=\"padding: 10px; font-weight: bold;\">Titolo Articolo:</td>\n      <td style=\"padding: 10px;\">{{ $json.article_title || 'N/A' }}</td>\n    </tr>\n    <tr>\n      <td style=\"padding: 10px; font-weight: bold;\">Parola Chiave:</td>\n      <td style=\"padding: 10px;\">{{ $json.selected_keyword || 'N/A' }}</td>\n    </tr>\n  </table>\n\n  <p style=\"background-color: #fdf2f2; border-left: 4px solid #c0392b; padding: 12px 16px; margin: 20px 0;\">\n    ⚠️ <strong>Azione richiesta:</strong> Controllare il workflow n8n (nodo \"WordPress - Create Draft\") per identificare e risolvere il problema.\n  </p>\n</div>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        9952,
+        7584
+      ],
+      "id": "7e6b77fb-cb70-4e6b-8716-1a33334c1fcb",
+      "name": "Notify Admin - WP Draft Failure",
+      "webhookId": "6ac50e66-973c-4c60-ba75-b9a6301f8d4c",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_CREDENTIAL_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sendTo": "your-email@example.com",
+        "subject": "=✅ Nuova Bozza SEO Pronta - {{ $('Sheets - Log Draft').item.json['Post Title'] }}",
+        "message": "=<div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n  <h2 style=\"color: #2c3e50;\">✅ Nuova Bozza SEO Pronta</h2>\n  \n  <p>È stato generato un nuovo articolo ed è pronto per la revisione su WordPress.</p>\n  \n  <table style=\"width: 100%; border-collapse: collapse; margin: 20px 0;\">\n    <tr>\n      <td style=\"padding: 8px 0; font-weight: bold;\">Titolo:</td>\n      <td style=\"padding: 8px 0;\"> {{ $('Sheets - Log Draft1').item.json['Post Title'] }}</td>\n    </tr>\n    <tr>\n      <td style=\"padding: 8px 0; font-weight: bold;\">Parola chiave:</td>\n      <td style=\"padding: 8px 0;\"> {{ $('Sheets - Log Draft1').item.json.Keyword }}</td>\n    </tr>\n    <tr>\n      <td style=\"padding: 8px 0; font-weight: bold;\">Numero parole:</td>\n      <td style=\"padding: 8px 0;\">{{ $('Sheets - Log Draft1').item.json['Word Count'] }}</td>\n    </tr>\n    <tr>\n      <td style=\"padding: 8px 0; font-weight: bold;\">Punteggio qualità (AI):</td>\n      <td style=\"padding: 8px 0;\">{{ $('Sheets - Log Draft1').item.json['Quality Score'] }}/10</td>\n    </tr>\n    <tr>\n      <td style=\"padding: 8px 0; font-weight: bold;\">Immagine caricata:</td>\n      <td style=\"padding: 8px 0;\">{{ $json.image_upload_success ? '✅ Sì' : '⚠️ No - da aggiungere manualmente' }}</td>\n    </tr>\n  </table>\n\n  <p style=\"margin: 24px 0;\">\n    <a href=\" {{ $('Sheets - Log Draft1').item.json['Draft Edit URL'] }}\" style=\"background-color: #2c3e50; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 4px; display: inline-block;\">\n      Rivedi la Bozza su WordPress\n    </a>\n  </p>\n\n  <p style=\"color: #7f8c8d; font-size: 0.9em;\">\n    Nota: l'articolo è salvato come <strong>Bozza</strong> e non è ancora pubblicato. La revisione umana è necessaria prima della pubblicazione.\n  </p>\n</div>",
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        10608,
+        7840
+      ],
+      "id": "97a73ede-2509-4210-aba0-8238ea2730ce",
+      "name": "Send Success Notification1",
+      "webhookId": "f8dc6035-64b9-4e68-8b03-909fef3c6da9",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_CREDENTIAL_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "amount": 20
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        9280,
+        6832
+      ],
+      "id": "a36d48e2-a999-4242-998e-10dedfe7c013",
+      "name": "Wait1",
+      "webhookId": "3f1df2c9-94d0-4e47-b96e-d755a2536bf2"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Node: Identify English Words\nconst data = $input.first().json;\nconst content = data.article_content || '';\n\nconst plainText = content\n  .replace(/<[^>]+>/g, ' ')\n  .replace(/\\s+/g, ' ')\n  .trim();\n\n// FIXED: Removed Italian homographs (in, per, via, ai, come, data, iter,\n// so, e.g., i.e., etc — these are also legitimate Italian words/abbrevs\n// and were causing massive false positives). Kept only unambiguous anglicisms.\nconst englishWords = [\n  // Genuine multi-char English function words with no Italian collision\n  'the','and','for','with','from','have','will','can','should','would',\n  'about','which','their','there','these','those','been','were','when',\n  'what','your','you','our','because','however','therefore','also','into',\n  'than','then','conclusion','click','learn','upon','within','without',\n  'through','during','between','among','versus','aka','ASAP',\n\n  // Business/Financial anglicisms (genuinely English in Italian text)\n  'CEO','CFO','CTO','broker','trading','forex','marketing',\n  'business','compliance','enforcement','default','deal',\n  'equity','bond','share','dividend','option','future','swap',\n  'hedge','fund','portfolio','asset','liability','leverage',\n  'spread','liquidity','volatility','arbitrage','settlement',\n  'clearing','custody','withdrawal','advisory','consulting',\n  'insight','solution','platform','framework',\n\n  // Common English verbs unlikely to appear as Italian words\n  'just','like','know','think','feel','need','give','take'\n];\n\nconst allText = [\n  plainText, data.title || '', data.meta_title || '',\n  data.meta_description || '', data.h1 || '', data.excerpt || ''\n].join(' ').toLowerCase();\n\nconst foundEnglish = [];\nfor (const word of englishWords) {\n  const regex = new RegExp(`\\\\b${word}\\\\b`, 'gi');\n  let match;\n  while ((match = regex.exec(allText)) !== null) {\n    foundEnglish.push({ word: match[0], lower: match[0].toLowerCase() });\n  }\n}\n\nconst uniqueWords = [...new Set(foundEnglish.map(w => w.lower))];\n\nif (uniqueWords.length > 0) {\n  const wordMap = {\n    'broker':'intermediario','trading':'operazioni finanziarie','forex':'cambi valutari',\n    'marketing':'promozione','business':'attività','compliance':'conformità normativa',\n    'enforcement':'applicazione delle norme','default':'inadempimento','deal':'accordo',\n    'equity':'capitale proprio','bond':'obbligazione','share':'quota','dividend':'dividendo',\n    'option':'opzione','future':'contratti a termine','swap':'contratti di scambio',\n    'hedge':'copertura','fund':'fondo','portfolio':'portafoglio','asset':'patrimonio',\n    'liability':'passività','leverage':'leva','spread':'differenziale',\n    'liquidity':'liquidità','volatility':'volatilità','arbitrage':'arbitraggio',\n    'settlement':'regolamento','clearing':'compensazione','custody':'custodia',\n    'withdrawal':'prelievo','advisory':'consulenza','consulting':'consulenza',\n    'insight':'analisi','solution':'soluzione','platform':'piattaforma','framework':'quadro'\n  };\n\n  const translationMap = {};\n  for (const w of uniqueWords) {\n    // FIXED: skip words with no real mapping instead of injecting a fake\n    // placeholder string into the prompt — that was the second bug causing\n    // GPT to silently ignore unmapped words.\n    if (wordMap[w]) translationMap[w] = wordMap[w];\n  }\n\n  return [{\n    json: {\n      ...data,\n      english_words_found: true,\n      english_words_list: Object.keys(translationMap),\n      english_words_count: Object.keys(translationMap).length,\n      english_translation_map: translationMap,\n      english_words_detected_at: new Date().toISOString(),\n      original_article_content: data.article_content,\n      needs_english_fix: Object.keys(translationMap).length > 0\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...data,\n    english_words_found: false,\n    english_words_count: 0,\n    needs_english_fix: false,\n    english_check_timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6208,
+        4720
+      ],
+      "id": "4179d862-c2f9-4b6d-a0c7-989ccba4db00",
+      "name": "Identify English Words"
+    },
+    {
+      "parameters": {
+        "model": {
+          "__rl": true,
+          "value": "gpt-5.1",
+          "mode": "list",
+          "cachedResultName": "gpt-5.1"
+        },
+        "builtInTools": {},
+        "options": {
+          "textFormat": {
+            "textOptions": {
+              "type": "json_object"
+            }
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatOpenAi",
+      "typeVersion": 1.3,
+      "position": [
+        6560,
+        4960
+      ],
+      "id": "6cfe44e3-c2be-4840-a389-e4714330b7ff",
+      "name": "OpenAI Chat Model3",
+      "credentials": {
+        "openAiApi": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_CREDENTIAL_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=Sei un correttore di bozze italiano specializzato nella sostituzione di parole inglesi con i loro equivalenti italiani.\n\n🚨 CONTESTO:\nHo già identificato le parole inglesi presenti nel testo seguente. \nIl tuo compito è SOSTITUIRE SOLO QUESTE PAROLE con i termini italiani corretti.\n\n📋 PAROLE INGLESI TROVATE (da sostituire):\n{{JSON.stringify($json.english_translation_map)}}\n\n🗺️ MAPPA DI TRADUZIONE:\n{{JSON.stringify($json.english_translation_map)}}\n\n📋 REGOLE:\n1. Sostituisci OGNI occorrenza delle parole inglesi elencate\n2. Usa la traduzione italiana indicata nella mappa\n3. Mantieni TUTTO il resto del testo INVARIATO\n4. Non modificare frasi già in italiano corretto\n5. Mantieni i termini latini classici (es. \"ad esempio\", \"de iure\")\n6. Mantieni i nomi propri (CONSOB, Banca d'Italia, MiFID, TUF)\n7. Mantieni la struttura HTML (tag, classi, ecc.)\n\n🔴 REGOLA D'ORO:\n- CAMBIA SOLO le parole inglesi elencate\n- NON cambiare nient'altro\n- Il significato deve rimanere IDENTICO\n\n📋 OUTPUT:\nRestituisci SOLO JSON valido:\n{\n  \"article_content\": \"il testo completo con le parole inglesi sostituite\",\n  \"article_html\": \"il testo completo con le parole inglesi sostituite\"\n}\n\n---\n\nTESTO ORIGINALE DA CORREGGERE:\n{{$json.original_article_content || $json.article_content}}\n\n---\n\n⚠️ RICORDA:\n- Parole da sostituire: {{$json.english_words_list ? $json.english_words_list.join(', ') : 'nessuna'}}\n- Se non ci sono parole inglesi, restituisci il testo invariato\n- IMPORTANTE: Restituisci SIA \"article_content\" CHE \"article_html\" con lo stesso contenuto",
+        "messages": {
+          "messageValues": [
+            {
+              "message": "Sei un editor senior specializzato in contenuti legali italiani. Rispondi SOLO con JSON valido."
+            }
+          ]
+        },
+        "batching": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chainLlm",
+      "typeVersion": 1.9,
+      "position": [
+        6464,
+        4800
+      ],
+      "id": "2b858372-eb9e-4777-aeb8-f870536bf927",
+      "name": "AI English Fixer (Context-Aware)",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "7facb16c-ece1-4c6c-b925-d352bbc2b756",
+              "leftValue": "={{ $json.remaining_english_count }}",
+              "rightValue": 10,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        7280,
+        5328
+      ],
+      "id": "3980186d-d503-447a-8352-3f9b930d0d84",
+      "name": "Still English Found?"
+    },
+    {
+      "parameters": {
+        "sendTo": "your-email@example.com",
+        "subject": "=⚠️ SEO Automation ERRORE - Controllo lingua fallito",
+        "message": "=<div>Testo inglese rilevato. Keyword: {{ $('Select Best Legal Keyword1').item.json.selected_keyword || 'N/A' }} Errore: {{ $json.error?.message || 'Errore sconosciuto' }}</div>",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmail",
+      "typeVersion": 2.2,
+      "position": [
+        7552,
+        5168
+      ],
+      "id": "724b947e-5268-4fdd-88e2-2c581698e9ca",
+      "name": "Notify Admin - Language Check Failed1",
+      "webhookId": "97c1f1da-bc5c-43b4-8cbe-d05b6813cb00",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_CREDENTIAL_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Node: Verify English Removed\nconst data = $input.first().json;\n\nlet fixedContent = data.article_content || data.article_html || data.text || '';\n\nif (!fixedContent && data.text) {\n  fixedContent = data.text;\n}\n\nif (fixedContent && typeof fixedContent === 'string' && fixedContent.trim().startsWith('{')) {\n  try {\n    const parsed = JSON.parse(fixedContent);\n    fixedContent = parsed.article_content || parsed.article_html || fixedContent;\n  } catch(e) {\n    // Not valid JSON, use as is\n  }\n}\n\ndata.article_content = fixedContent;\ndata.article_html = fixedContent;\n\nconst plainText = fixedContent\n  .replace(/<[^>]+>/g, ' ')\n  .replace(/\\s+/g, ' ')\n  .trim();\n\n// SYNCED with fixed \"Identify English Words\" list — same 65 unambiguous words,\n// Italian homographs (in, per, via, so, ai, come, data, iter, e.g., i.e.) removed\nconst englishWords = [\n  'the','and','for','with','from','have','will','can','should','would',\n  'about','which','their','there','these','those','been','were','when',\n  'what','your','you','our','because','however','therefore','also','into',\n  'than','then','conclusion','click','learn','upon','within','without',\n  'through','during','between','among','versus','aka','ASAP',\n  'CEO','CFO','CTO','broker','trading','forex','marketing',\n  'business','compliance','enforcement','default','deal',\n  'equity','bond','share','dividend','option','future','swap',\n  'hedge','fund','portfolio','asset','liability','leverage',\n  'spread','liquidity','volatility','arbitrage','settlement',\n  'clearing','custody','withdrawal','advisory','consulting',\n  'insight','solution','platform','framework',\n  'just','like','know','think','feel','need','give','take'\n];\n\nconst allText = [\n  plainText,\n  data.title || '',\n  data.meta_title || '',\n  data.meta_description || '',\n  data.h1 || '',\n  data.excerpt || ''\n].join(' ').toLowerCase();\n\nconst remainingEnglish = englishWords.filter(word => {\n  const regex = new RegExp(`\\\\b${word}\\\\b`, 'gi');\n  return regex.test(allText);\n});\n\nconst uniqueRemaining = [...new Set(remainingEnglish)];\n\nif (uniqueRemaining.length > 0) {\n  return [{\n    json: {\n      ...data,\n      article_content: fixedContent,\n      article_html: fixedContent,\n      english_verification_passed: false,\n      remaining_english_words: uniqueRemaining,\n      remaining_english_count: uniqueRemaining.length,\n      block_publication: true,\n      error_message: `⚠️ ${uniqueRemaining.length} parole inglesi ancora presenti: ${uniqueRemaining.join(', ')}`,\n      verification_timestamp: new Date().toISOString()\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    ...data,\n    article_content: fixedContent,\n    article_html: fixedContent,\n    english_verification_passed: true,\n    remaining_english_words: [],\n    remaining_english_count: 0,\n    block_publication: false,\n    verification_timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        6832,
+        5056
+      ],
+      "id": "361f9b8e-a4ba-4579-86ee-82de983aef62",
+      "name": "Verify English Removed"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -800,
+        2448
+      ],
+      "id": "29942dbd-aea2-4797-8ec7-05d67ed358d7",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WORKFLOW CONFIGURATION — edit these values before going live\n// ============================================================\nreturn [{\n  json: {\n\n    // --- SEOZoom ---\n    // IMPORTANT: Verify the correct endpoint with SEOZoom support.\n    // Their API documentation is at https://suite.seozoom.it/api-docs/\n    // The URL below is a PLACEHOLDER — confirm before deployment.\n    seozoom_endpoint: 'https://apiv2.seozoom.com/api/v2/keywords/',\n\n    // SEOZoom query parameters — verify field names with their docs\n    seozoom_country: 'it',\n    seozoom_language: 'it',\n    seozoom_limit: 50,\n    seozoom_min_volume: 100,\n\n    // --- WordPress ---\n    wordpress_url: 'https://YOUR-SITE.example.com',\n    // NEVER change post_status to 'publish'\n    wordpress_post_status: 'draft',\n\n    // --- Content ---\n    content_language: 'italiano',\n    content_min_words: 900,\n    content_min_h2_count: 3,\n    content_min_faq_count: 3,\n    meta_title_max_chars: 60,\n    meta_description_max_chars: 160,\n\n    // --- Firm identity (used in prompts and disclaimer) ---\n    firm_name: 'Your Firm Name',\n    firm_city: 'Italia',\n    firm_phone: '+00 000 000 0000',\n    firm_email: 'your-email@example.com',\n    firm_practice_areas: 'diritto di famiglia, diritto civile, diritto penale, diritto del lavoro, diritto immobiliare',\n\n    // --- Notifications ---\n    admin_email: 'your-email@example.com',\n    from_email: 'your-email@example.com',\n\n    // --- Google Sheets ---\n    google_sheet_id: 'YOUR_GOOGLE_SHEET_ID_2',\n\n    // --- Retry settings ---\n    max_retries: 3\n  }\n}];"
+      },
+      "id": "c92a5f2d-2f7e-47d2-a0b3-c1c626c4a330",
+      "name": "Workflow Config1",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -592,
+        2464
+      ]
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 705350307,
+          "mode": "list",
+          "cachedResultName": "Studio_Legale_YourFirm_Topics",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -352,
+        2608
+      ],
+      "id": "4ab3061a-eaaa-4bb7-a2d8-2b977dad8edb",
+      "name": "Get row(s) in sheet2",
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_CREDENTIAL_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all();\nconst pending = rows.find(row => (row.json.Status || '').trim() === 'Pending');\nif (pending) {\n  return [{ json: { found: true, ...pending.json } }];\n}\nreturn [{ json: { found: false } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -144,
+        2736
+      ],
+      "id": "46d0393d-5844-48cb-8ca4-d665dae621fc",
+      "name": "Find Pending1"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "10a45e2f-7d2d-4aab-88fb-e84513c9b1a7",
+              "leftValue": "={{$json.found}}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        96,
+        2880
+      ],
+      "id": "a9066431-f6c8-47ac-b064-db46b30c6313",
+      "name": "IF Pending Found?1"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 705350307,
+          "mode": "list",
+          "cachedResultName": "Studio_Legale_YourFirm_Topics",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        288,
+        3136
+      ],
+      "id": "be4896e2-da98-4a3e-a7b9-8a044c212a53",
+      "name": "Get row(s) in sheet3",
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_CREDENTIAL_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all();\nreturn rows.filter(row => row.json.Status === 'Done');"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        3376
+      ],
+      "id": "1cf23cc1-f73d-4567-b066-243be03dddbb",
+      "name": "Code in JavaScript4"
+    },
+    {
+      "parameters": {
+        "operation": "update",
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 705350307,
+          "mode": "list",
+          "cachedResultName": "Studio_Legale_YourFirm_Topics",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_number": "={{ $json.row_number }}",
+            "Status": "Pending"
+          },
+          "matchingColumns": [
+            "row_number"
+          ],
+          "schema": [
+            {
+              "id": "Topic",
+              "displayName": "Topic",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "Status",
+              "displayName": "Status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "Last Used",
+              "displayName": "Last Used",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "row_number",
+              "displayName": "row_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "readOnly": true,
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        672,
+        3584
+      ],
+      "id": "ffff3dc0-9163-4251-be47-41ce8a1b6df5",
+      "name": "Update row in sheet1",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_CREDENTIAL_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{$('Workflow Config1').first().json.wordpress_url}}/wp-json/wp/v2/posts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "per_page",
+              "value": "100"
+            },
+            {
+              "name": "status",
+              "value": "any"
+            },
+            {
+              "name": "_fields",
+              "value": "id,title,link,slug,categories,focus_keyword"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "parameters": {
+                "parameters": [
+                  {
+                    "name": "page",
+                    "value": "={{$pageCount + 1}}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ $pageCount >= parseInt($response.headers['x-wp-totalpages'] || 1) }}",
+              "limitPagesFetched": true,
+              "maxRequests": 20
+            }
+          },
+          "timeout": 60000
+        }
+      },
+      "id": "e3b2c888-e04a-493f-ad6e-9c34a2ba6ba2",
+      "name": "WordPress - Get Full Post History1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        496,
+        2784
+      ],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_CREDENTIAL_NAME"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// // ============================================================\n// // Extract Primary Keywords — RankMath multi-keyword aware,\n// // case + accent normalized, incomplete-fragment filtered,\n// // redundancy-cleaned, topic-relevant filtered\n// // ============================================================\n\n// const items = $input.all();\n// let posts = [];\n\n// const stopwords = new Set([\n//   'il','lo','la','i','gli','le','un','uno','una','di','a','da','in','con',\n//   'su','per','tra','fra','e','o','ma','che','del','della','dei','delle',\n//   'dell','al','allo','alla','ai','agli','alle','come','cosa','quando',\n//   'dove','perche','perché','chi','cos','è','sono','se','non','più','puo','può'\n// ]);\n\n// const incompleteEndings = new Set([\n//   'in','di','per','con','da','a','e','il','lo','la','un','uno','una',\n//   'al','allo','alla','ai','agli','alle','del','dello','della','dei','delle',\n//   'tra','fra','su','che','come'\n// ]);\n\n// function decodeEntities(str) {\n//   return (str || '')\n//     .replace(/&#8217;/g, \"'\")\n//     .replace(/&#8211;/g, \"-\")\n//     .replace(/&amp;/g, '&')\n//     .replace(/&quot;/g, '\"');\n// }\n\n// function normalizeKeyword(kw) {\n//   return (kw || '')\n//     .toLowerCase()\n//     .trim()\n//     .replace(/\\s+/g, ' ')\n//     .normalize('NFD')\n//     .replace(/[\\u0300-\\u036f]/g, '');\n// }\n\n// function isValidKeyword(kw) {\n//   const words = kw.split(' ').filter(w => w.length > 0);\n//   if (words.length < 2) return false;\n//   const lastWord = words[words.length - 1];\n//   return !incompleteEndings.has(lastWord);\n// }\n\n// function deriveKeyword(title) {\n//   const clean = decodeEntities(title)\n//     .toLowerCase()\n//     .replace(/[^\\p{L}\\p{N}\\s]/gu, ' ')\n//     .split(/\\s+/)\n//     .filter(w => w.length > 2 && !stopwords.has(w));\n//   return clean.slice(0, 4).join(' ').trim();\n// }\n\n// function removeRedundantSubstrings(keywords) {\n//   const sorted = [...keywords].sort((a, b) => b.length - a.length);\n//   const result = [];\n//   for (const kw of sorted) {\n//     const isSubstring = result.some(existing => existing.includes(kw));\n//     if (!isSubstring) result.push(kw);\n//   }\n//   return result;\n// }\n\n// // --- Build posts array ---\n// for (const item of items) {\n//   const j = item.json;\n//   if (!j || !j.id) continue;\n\n//   const rawTitle = (j.title && typeof j.title.rendered === 'string') ? j.title.rendered : '';\n//   if (!rawTitle) continue;\n\n//   const title = decodeEntities(rawTitle);\n//   const link = j.link || '';\n//   const slug = j.slug || '';\n\n//   const focusKeywordRaw = (typeof j.focus_keyword === 'string') ? j.focus_keyword.trim() : '';\n\n//   let keywordList = focusKeywordRaw\n//     .split(',')\n//     .map(k => normalizeKeyword(k))\n//     .filter(k => k.length > 0 && isValidKeyword(k));\n\n//   if (keywordList.length === 0) {\n//     const derived = deriveKeyword(title);\n//     if (derived) keywordList = [derived];\n//   }\n\n//   posts.push({\n//     id: j.id,\n//     title,\n//     link,\n//     slug,\n//     focus_keyword: focusKeywordRaw,\n//     keyword_list: keywordList,\n//     primary_keyword: keywordList[0] || '',\n//     source: focusKeywordRaw ? 'rankmath' : 'derived'\n//   });\n// }\n\n// // --- Topic-relevant filtering (accent-insensitive) ---\n// let currentTopic = '';\n// try {\n//   currentTopic = $('Find Pending1').first().json.Topic || '';\n// } catch (e) {\n//   currentTopic = '';\n// }\n\n// const topicWords = normalizeKeyword(currentTopic).split(' ').filter(w => w.length > 2);\n\n// // 🔥 FILTER: Keep ONLY topic-related posts\n// let relevantPosts = [];\n// if (topicWords.length > 0) {\n//   relevantPosts = posts.filter(p => {\n//     const searchText = normalizeKeyword(p.title + ' ' + p.focus_keyword);\n//     return topicWords.some(w => searchText.includes(w));\n//   });\n// } else {\n//   // If no topic found, keep all posts (fallback)\n//   relevantPosts = posts;\n// }\n\n// // --- Build excluded keyword list from relevant posts ONLY ---\n// const rawExcluded = [...new Set(\n//   relevantPosts.flatMap(p => p.keyword_list).filter(kw => kw && kw.length > 0)\n// )];\n// const excludedKeywords = removeRedundantSubstrings(rawExcluded);\n\n// // 🔥 OUTPUT: Return ONLY topic-related posts\n// return relevantPosts.map(p => ({\n//   json: {\n//     ...p, // Spread all post data\n//     current_topic: currentTopic,\n//     topic_match_count: relevantPosts.length,\n//     excluded_keywords: excludedKeywords,\n//     excluded_keywords_csv: excludedKeywords.join(', '),\n//     is_topic_related: true\n//   }\n// }));\n\n\n\n\n\n\n\n\n\n// ============================================================\n// Extract Primary Keywords — RankMath multi-keyword aware,\n// case + accent normalized, incomplete-fragment filtered,\n// redundancy-cleaned, topic-relevant filtered (Italian stem-aware)\n// NO relevant post found => return single empty placeholder item\n// ============================================================\n\nconst items = $input.all();\nlet posts = [];\n\nconst stopwords = new Set([\n  'il','lo','la','i','gli','le','un','uno','una','di','a','da','in','con',\n  'su','per','tra','fra','e','o','ma','che','del','della','dei','delle',\n  'dell','al','allo','alla','ai','agli','alle','come','cosa','quando',\n  'dove','perche','perché','chi','cos','è','sono','se','non','più','puo','può'\n]);\n\nconst incompleteEndings = new Set([\n  'in','di','per','con','da','a','e','il','lo','la','un','uno','una',\n  'al','allo','alla','ai','agli','alle','del','dello','della','dei','delle',\n  'tra','fra','su','che','come'\n]);\n\nfunction decodeEntities(str) {\n  return (str || '')\n    .replace(/&#8217;/g, \"'\")\n    .replace(/&#8211;/g, \"-\")\n    .replace(/&amp;/g, '&')\n    .replace(/&quot;/g, '\"');\n}\n\nfunction normalizeKeyword(kw) {\n  return (kw || '')\n    .toLowerCase()\n    .trim()\n    .replace(/\\s+/g, ' ')\n    .normalize('NFD')\n    .replace(/[\\u0300-\\u036f]/g, '');\n}\n\n// Crude Italian stemmer: strips plural/gender endings so\n// \"sinistri\" ~ \"sinistro\", \"stradali\" ~ \"stradale\" match.\nfunction italianStem(word) {\n  if (!word || word.length < 4) return word;\n  return word\n    .replace(/(zioni|zione|mente)$/, '')\n    .replace(/(issimo|issima)$/, '')\n    .replace(/[oiae]$/, '');\n}\n\nfunction isValidKeyword(kw) {\n  const words = kw.split(' ').filter(w => w.length > 0);\n  if (words.length < 2) return false;\n  const lastWord = words[words.length - 1];\n  return !incompleteEndings.has(lastWord);\n}\n\nfunction deriveKeyword(title) {\n  const clean = decodeEntities(title)\n    .toLowerCase()\n    .replace(/[^\\p{L}\\p{N}\\s]/gu, ' ')\n    .split(/\\s+/)\n    .filter(w => w.length > 2 && !stopwords.has(w));\n  return clean.slice(0, 4).join(' ').trim();\n}\n\nfunction removeRedundantSubstrings(keywords) {\n  const sorted = [...keywords].sort((a, b) => b.length - a.length);\n  const result = [];\n  for (const kw of sorted) {\n    const isSubstring = result.some(existing => existing.includes(kw));\n    if (!isSubstring) result.push(kw);\n  }\n  return result;\n}\n\n// --- Build posts array ---\nfor (const item of items) {\n  const j = item.json;\n  if (!j || !j.id) continue;\n\n  const rawTitle = (j.title && typeof j.title.rendered === 'string') ? j.title.rendered : '';\n  if (!rawTitle) continue;\n\n  const title = decodeEntities(rawTitle);\n  const link = j.link || '';\n  const slug = j.slug || '';\n\n  const focusKeywordRaw = (typeof j.focus_keyword === 'string') ? j.focus_keyword.trim() : '';\n\n  let keywordList = focusKeywordRaw\n    .split(',')\n    .map(k => normalizeKeyword(k))\n    .filter(k => k.length > 0 && isValidKeyword(k));\n\n  if (keywordList.length === 0) {\n    const derived = deriveKeyword(title);\n    if (derived) keywordList = [derived];\n  }\n\n  const searchWords = normalizeKeyword(title + ' ' + focusKeywordRaw)\n    .split(/\\s+/)\n    .filter(w => w.length > 2);\n  const stemmedSearchWords = new Set(searchWords.map(italianStem));\n\n  posts.push({\n    id: j.id,\n    title,\n    link,\n    slug,\n    focus_keyword: focusKeywordRaw,\n    keyword_list: keywordList,\n    primary_keyword: keywordList[0] || '',\n    source: focusKeywordRaw ? 'rankmath' : 'derived',\n    _stemmedSearchWords: stemmedSearchWords // internal only, stripped before output\n  });\n}\n\n// --- Topic-relevant filtering (accent + stem insensitive) ---\nlet currentTopic = '';\ntry {\n  currentTopic = $('Find Pending1').first().json.Topic || '';\n} catch (e) {\n  currentTopic = '';\n}\n\nconst topicWords = normalizeKeyword(currentTopic)\n  .split(' ')\n  .filter(w => w.length > 2);\nconst stemmedTopicWords = topicWords.map(italianStem);\n\n// Case A: no topic at all (upstream node/field missing) -> keep OLD behavior,\n// treat as \"no filter\", pass all posts through (this is NOT the empty-match case).\nif (stemmedTopicWords.length === 0) {\n  const rawExcluded = [...new Set(\n    posts.flatMap(p => p.keyword_list).filter(kw => kw && kw.length > 0)\n  )];\n  const excludedKeywords = removeRedundantSubstrings(rawExcluded);\n\n  return posts.map(p => {\n    const { _stemmedSearchWords, ...clean } = p;\n    return {\n      json: {\n        ...clean,\n        current_topic: currentTopic,\n        topic_words_used: topicWords,\n        topic_match_mode: 'no_topic',\n        topic_match_count: posts.length,\n        excluded_keywords: excludedKeywords,\n        excluded_keywords_csv: excludedKeywords.join(', '),\n        is_topic_related: false\n      }\n    };\n  });\n}\n\n// Case B: topic exists, filter by stem match against existing posts\nconst relevantPosts = posts.filter(p =>\n  stemmedTopicWords.some(tw => p._stemmedSearchWords.has(tw))\n);\n\n// Case C: topic exists but genuinely ZERO relevant posts found\n// -> do NOT fall back to all posts (that poisons excluded_keywords).\n// -> return one lightweight placeholder item so downstream node doesn't break.\nif (relevantPosts.length === 0) {\n  return [{\n    json: {\n      id: null,\n      title: '',\n      link: '',\n      slug: '',\n      focus_keyword: '',\n      keyword_list: [],\n      primary_keyword: '',\n      source: 'none',\n      current_topic: currentTopic,\n      topic_words_used: topicWords,\n      topic_match_mode: 'no_relevant_posts',\n      topic_match_count: 0,\n      excluded_keywords: [],\n      excluded_keywords_csv: '',\n      is_topic_related: false\n    }\n  }];\n}\n\n// Case D: normal path — genuine relevant posts found\nconst rawExcluded = [...new Set(\n  relevantPosts.flatMap(p => p.keyword_list).filter(kw => kw && kw.length > 0)\n)];\nconst excludedKeywords = removeRedundantSubstrings(rawExcluded);\n\nreturn relevantPosts.map(p => {\n  const { _stemmedSearchWords, ...clean } = p;\n  return {\n    json: {\n      ...clean,\n      current_topic: currentTopic,\n      topic_words_used: topicWords,\n      topic_match_mode: 'stem',\n      topic_match_count: relevantPosts.length,\n      excluded_keywords: excludedKeywords,\n      excluded_keywords_csv: excludedKeywords.join(', '),\n      is_topic_related: true\n    }\n  };\n});"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        2624
+      ],
+      "id": "f8c389c6-4163-4020-9a2f-9ec17ed7c6b0",
+      "name": "Extract Primary Keywords",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "resource": "workflow",
+        "workflowOperation": "dispatchWorkflow",
+        "workflowId": "YOUR_WORKFLOW_ID",
+        "workflowRunParameters": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "excluded_keywords": "={{ $('Extract Primary Keywords').first().json.excluded_keywords_csv }}",
+            "primary_keyword": "={{ $('IF Pending Found?1').first().json.Topic }}"
+          },
+          "matchingColumns": [
+            "primary_keyword",
+            "excluded_keywords"
+          ],
+          "schema": [
+            {
+              "id": "primary_keyword",
+              "displayName": "primary_keyword",
+              "defaultMatch": true,
+              "canBeUsedToMatch": false,
+              "required": false,
+              "display": true,
+              "type": "string",
+              "removed": false
+            },
+            {
+              "id": "excluded_keywords",
+              "displayName": "excluded_keywords",
+              "defaultMatch": true,
+              "canBeUsedToMatch": false,
+              "required": true,
+              "display": true,
+              "type": "string",
+              "removed": false
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "webhookCallbackUrl": "=",
+        "requestOptions": {}
+      },
+      "type": "n8n-nodes-skyvern.skyvern",
+      "typeVersion": 1,
+      "position": [
+        912,
+        2624
+      ],
+      "id": "becb8109-ac87-408a-98f8-47bb5d24be0b",
+      "name": "Skyvern3",
+      "executeOnce": true,
+      "credentials": {
+        "skyvernApi": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_CREDENTIAL_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "={{$('Workflow Config2').first().json.wordpress_url}}/wp-json/wp/v2/posts",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "per_page",
+              "value": "100"
+            },
+            {
+              "name": "status",
+              "value": "any"
+            },
+            {
+              "name": "_fields",
+              "value": "id,title,slug,link,meta"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 3000
+        }
+      },
+      "id": "6732a1ee-efff-4358-ac74-e1bfd1a8e7de",
+      "name": "WordPress - Get Existing Posts1",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3072,
+        3040
+      ],
+      "credentials": {
+        "httpBasicAuth": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_CREDENTIAL_NAME"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// const posts = ($json.existing_posts || [])\n//   .slice(0, 10)\n//   .map(p => `${p.title} | ${p.link}`);\n\n// return [{\n//   json: {\n//     ...$json,\n//     existing_posts_text: posts.join('\\n')\n//   }\n// }];\n\nconst posts = ($json.existing_posts || []);\n\nlet existingPostsText;\nif (posts.length > 0) {\n  existingPostsText = posts\n    .map((p, i) => {\n      const lines = [\n        `${i + 1}. Titolo: \"${p.title}\"`,\n        `   URL: ${p.link}`\n      ];\n      if (p.slug) lines.push(`   Slug: ${p.slug}`);\n      if (p.excerpt) lines.push(`   Estratto: ${p.excerpt}`);\n      if (p.date) lines.push(`   Data pubblicazione: ${p.date}`);\n      lines.push(`   Stato: ${p.status || 'publish'}`);\n      return lines.join('\\n');\n    })\n    .join('\\n\\n');\n} else {\n  existingPostsText = 'Nessun articolo esistente trovato sul sito su questo argomento.';\n}\n\nreturn [{\n  json: {\n    ...$json,\n    existing_posts_text: existingPostsText\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3712,
+        3408
+      ],
+      "id": "2e4d6575-e42e-4bdf-9bb3-f639e34f3fab",
+      "name": "Code in JavaScript5"
+    },
+    {
+      "parameters": {
+        "amount": 10
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        3472,
+        3232
+      ],
+      "id": "a04758ac-86e1-4e32-a6e9-6eef205a4247",
+      "name": "Wait5",
+      "webhookId": "506fac1a-2885-49d6-8108-78e641bf62cd"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ============================================================\n// WORKFLOW CONFIGURATION — edit these values before going live\n// ============================================================\nreturn [{\n  json: {\n\n    // --- SEOZoom ---\n    // IMPORTANT: Verify the correct endpoint with SEOZoom support.\n    // Their API documentation is at https://suite.seozoom.it/api-docs/\n    // The URL below is a PLACEHOLDER — confirm before deployment.\n    seozoom_endpoint: 'https://apiv2.seozoom.com/api/v2/keywords/',\n\n    // SEOZoom query parameters — verify field names with their docs\n    seozoom_country: 'it',\n    seozoom_language: 'it',\n    seozoom_limit: 50,\n    seozoom_min_volume: 100,\n\n    // --- WordPress ---\n    wordpress_url: 'https://YOUR-SITE.example.com',\n    // NEVER change post_status to 'publish'\n    wordpress_post_status: 'draft',\n\n    // --- Content ---\n    content_language: 'italiano',\n    content_min_words: 900,\n    content_min_h2_count: 3,\n    content_min_faq_count: 3,\n    meta_title_max_chars: 60,\n    meta_description_max_chars: 160,\n\n    // --- Firm identity (used in prompts and disclaimer) ---\n    firm_name: 'Your Firm Name',\n    firm_city: 'Italia',\n    firm_phone: '+00 000 000 0000',\n    firm_email: 'your-email@example.com',\n    firm_practice_areas: 'diritto di famiglia, diritto civile, diritto penale, diritto del lavoro, diritto immobiliare',\n\n    // --- Notifications ---\n    admin_email: 'your-email@example.com',\n    from_email: 'your-email@example.com',\n\n    // --- Google Sheets ---\n    google_sheet_id: 'YOUR_GOOGLE_SHEET_ID_2',\n\n    // --- Retry settings ---\n    max_retries: 3\n  }\n}];"
+      },
+      "id": "7dac35d9-3ce2-4ae7-968b-d028b053f838",
+      "name": "Workflow Config2",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2688,
+        2848
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// // Extract the Related Post\n\n// const allPosts = $input.all() || [];\n\n// let topic = '';\n// let keywords = [];\n// let topicSource = 'none';\n\n// try {\n//   const selectBest = $('Select Best Legal Keyword1').first().json;\n//   if (selectBest && !selectBest.error) {\n//     topic = selectBest.topic || selectBest.selected_keyword || '';\n//     keywords = selectBest.top_keywords || [];\n//     topicSource = 'Select Best Legal Keyword1';\n//   }\n// } catch (e) {}\n\n// if (!topic) {\n//   try {\n//     const webhookData = $('Webhook1').first().json;\n//     if (webhookData.body && webhookData.body.topic) {\n//       topic = webhookData.body.topic;\n//       topicSource = 'Webhook1 fallback';\n//     }\n//   } catch (e) {}\n// }\n\n// function normalize(str) {\n//   return String(str || '')\n//     .toLowerCase()\n//     .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')\n//     .replace(/['']/g, '')\n//     .replace(/\\s+/g, ' ')\n//     .trim();\n// }\n\n// function stripHtml(html) {\n//   return String(html || '').replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim();\n// }\n\n// if (!topic) {\n//   return [{\n//     json: {\n//       error: 'No topic found',\n//       debug: { topicSource, totalPostsReceived: allPosts.length },\n//       related_posts: [], related_posts_count: 0, all_posts: [], total_posts: allPosts.length\n//     }\n//   }];\n// }\n\n// const normTopic = normalize(topic);\n// const topicCore = normTopic.split(' ')[0]; // e.g. \"malasanita\"\n\n// // Keyword গুলো থেকে শুধু ওগুলোই রাখো যেগুলোর মধ্যে topicCore আছে (site-wide generic word যেমন \"avvocato\" একা বাদ)\n// const keywordListRaw = keywords\n//   .map(k => normalize(k.keyword || k || ''))\n//   .filter(kw => kw && kw.includes(topicCore)); // topic-related keyword phrase-e restrict\n\n// const searchTerms = Array.from(new Set([normTopic, topicCore, ...keywordListRaw]))\n//   .filter(t => t.length > 4); // খুব ছোট generic শব্দ বাদ\n\n// console.log('Topic:', topic, '| Source:', topicSource);\n// console.log('Search terms (restricted):', searchTerms);\n// console.log('Total posts received:', allPosts.length);\n\n// function getSearchableText(post) {\n//   if (!post || !post.json) return '';\n//   const j = post.json;\n//   const title = j.title && j.title.rendered ? j.title.rendered : (j.title || '');\n//   const excerpt = j.excerpt && j.excerpt.rendered ? j.excerpt.rendered : (j.excerpt || '');\n//   // content বাদ — শুধু title + excerpt (boilerplate-free, post-specific)\n//   return normalize(stripHtml(title) + ' ' + stripHtml(excerpt));\n// }\n\n// function matchedTerm(post) {\n//   const text = getSearchableText(post);\n//   if (!text) return null;\n//   for (const term of searchTerms) {\n//     if (text.includes(term)) return term;\n//   }\n//   return null;\n// }\n\n// const relatedPosts = [];\n// const allPostsList = [];\n// const debugMatches = [];\n\n// for (const post of allPosts) {\n//   if (post.json && post.json.id) {\n//     const j = post.json;\n//     const postObj = {\n//       id: j.id,\n//       title: j.title && j.title.rendered ? j.title.rendered : (j.title || ''),\n//       link: j.link || '',\n//       slug: j.slug || '',\n//       date: j.date || '',\n//       excerpt: stripHtml(j.excerpt && j.excerpt.rendered ? j.excerpt.rendered : (j.excerpt || '')).substring(0, 200),\n//       status: j.status || 'publish'\n//     };\n//     allPostsList.push(postObj);\n\n//     const match = matchedTerm(post);\n//     debugMatches.push({ id: j.id, title: postObj.title.substring(0, 60), matched: match });\n\n//     if (match) relatedPosts.push(postObj);\n//   }\n// }\n\n// // ... (rest of your code exactly same, no changes) ...\n\n// console.log('Related posts found:', relatedPosts.length, '/', allPostsList.length);\n\n// // --- existing_posts_text: matched posts joined for OpenAI prompt ---\n// let existingPostsText;\n// if (relatedPosts.length > 0) {\n//   existingPostsText = relatedPosts\n//     .map(p => `- \"${p.title}\" (${p.link})`)\n//     .join('\\n');\n// } else {\n//   existingPostsText = 'Nessun articolo esistente trovato sul sito su questo argomento.';\n// }\n\n// return [{\n//   json: {\n//     topic,\n//     topicSource,\n//     search_terms_used: searchTerms,\n//     selected_keyword: keywords.length > 0 ? (keywords[0].keyword || keywords[0] || '') : topic,\n//     selected_keywords_5: keywords.slice(0, 5).map(k => k.keyword || k || ''),\n//     all_keywords: keywords,\n//     related_posts: relatedPosts,\n//     related_posts_count: relatedPosts.length,\n//     all_posts: allPostsList,\n//     total_posts: allPostsList.length,\n//     existing_posts: relatedPosts,\n//     existing_posts_count: relatedPosts.length,\n//     existing_posts_text: existingPostsText,\n//     debug_match_log: debugMatches\n//   }\n// }];\n\n\n// Extract the Related Post\n\nconst allPosts = $input.all() || [];\n\nlet topic = '';\nlet keywords = [];\nlet topicSource = 'none';\n\ntry {\n  const selectBest = $('Select Best Legal Keyword1').first().json;\n  if (selectBest && !selectBest.error) {\n    topic = selectBest.topic || selectBest.selected_keyword || '';\n    keywords = selectBest.top_keywords || [];\n    topicSource = 'Select Best Legal Keyword1';\n  }\n} catch (e) {}\n\nif (!topic) {\n  try {\n    const webhookData = $('Webhook1').first().json;\n    if (webhookData.body && webhookData.body.topic) {\n      topic = webhookData.body.topic;\n      topicSource = 'Webhook1 fallback';\n    }\n  } catch (e) {}\n}\n\nfunction normalize(str) {\n  return String(str || '')\n    .toLowerCase()\n    .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')\n    .replace(/['']/g, '')\n    .replace(/\\s+/g, ' ')\n    .trim();\n}\n\nfunction stripHtml(html) {\n  return String(html || '').replace(/<[^>]*>/g, ' ').replace(/\\s+/g, ' ').trim();\n}\n\nif (!topic) {\n  return [{\n    json: {\n      error: 'No topic found',\n      debug: { topicSource, totalPostsReceived: allPosts.length },\n      related_posts: [],\n      related_posts_count: 0,\n      all_posts: [],\n      total_posts: allPosts.length,\n      existing_posts: [],\n      existing_posts_count: 0,\n      existing_posts_text: 'Nessun articolo esistente trovato sul sito su questo argomento.',\n      debug_match_log: []\n    }\n  }];\n}\n\nconst normTopic = normalize(topic);\nconst topicCore = normTopic.split(' ')[0]; // e.g. \"malasanita\"\n\n// Keyword গুলো থেকে শুধু ওগুলোই রাখো যেগুলোর মধ্যে topicCore আছে\nconst keywordListRaw = keywords\n  .map(k => normalize(k.keyword || k || ''))\n  .filter(kw => kw && kw.includes(topicCore));\n\nconst searchTerms = Array.from(new Set([normTopic, topicCore, ...keywordListRaw]))\n  .filter(t => t.length > 4);\n\nconsole.log('Topic:', topic, '| Source:', topicSource);\nconsole.log('Search terms (restricted):', searchTerms);\nconsole.log('Total posts received:', allPosts.length);\n\nfunction getSearchableText(post) {\n  if (!post || !post.json) return '';\n  const j = post.json;\n  const title = j.title && j.title.rendered ? j.title.rendered : (j.title || '');\n  const excerpt = j.excerpt && j.excerpt.rendered ? j.excerpt.rendered : (j.excerpt || '');\n  // content বাদ — শুধু title + excerpt (boilerplate-free, post-specific)\n  return normalize(stripHtml(title) + ' ' + stripHtml(excerpt));\n}\n\nfunction matchedTerm(post) {\n  const text = getSearchableText(post);\n  if (!text) return null;\n  for (const term of searchTerms) {\n    if (text.includes(term)) return term;\n  }\n  return null;\n}\n\nconst relatedPosts = [];\nconst allPostsList = [];\nconst debugMatches = [];\n\nfor (const post of allPosts) {\n  if (post.json && post.json.id) {\n    const j = post.json;\n    const postObj = {\n      id: j.id,\n      title: j.title && j.title.rendered ? j.title.rendered : (j.title || ''),\n      link: j.link || '',\n      slug: j.slug || '',\n      date: j.date || '',\n      excerpt: stripHtml(j.excerpt && j.excerpt.rendered ? j.excerpt.rendered : (j.excerpt || '')).substring(0, 200),\n      status: j.status || 'publish'\n    };\n    allPostsList.push(postObj);\n\n    const match = matchedTerm(post);\n    debugMatches.push({ id: j.id, title: postObj.title.substring(0, 60), matched: match });\n\n    if (match) relatedPosts.push(postObj);\n  }\n}\n\nconsole.log('Related posts found:', relatedPosts.length, '/', allPostsList.length);\n\n// --- existing_posts_text: matched posts full details, LLM-friendly format ---\nlet existingPostsText;\nif (relatedPosts.length > 0) {\n  existingPostsText = relatedPosts\n    .map((p, i) => {\n      const lines = [\n        `${i + 1}. Titolo: \"${p.title}\"`,\n        `   URL: ${p.link}`\n      ];\n      if (p.slug) lines.push(`   Slug: ${p.slug}`);\n      if (p.excerpt) lines.push(`   Estratto: ${p.excerpt}`);\n      if (p.date) lines.push(`   Data pubblicazione: ${p.date}`);\n      lines.push(`   Stato: ${p.status}`);\n      return lines.join('\\n');\n    })\n    .join('\\n\\n');\n} else {\n  existingPostsText = 'Nessun articolo esistente trovato sul sito su questo argomento.';\n}\n\nreturn [{\n  json: {\n    topic,\n    topicSource,\n    search_terms_used: searchTerms,\n    selected_keyword: keywords.length > 0 ? (keywords[0].keyword || keywords[0] || '') : topic,\n    selected_keywords_5: keywords.slice(0, 5).map(k => k.keyword || k || ''),\n    all_keywords: keywords,\n    related_posts: relatedPosts,\n    related_posts_count: relatedPosts.length,\n    all_posts: allPostsList,\n    total_posts: allPostsList.length,\n    existing_posts: relatedPosts,\n    existing_posts_count: relatedPosts.length,\n    existing_posts_text: existingPostsText,\n    debug_match_log: debugMatches\n  }\n}];"
+      },
+      "id": "6603103f-ab45-493a-bdb9-71c4defdfeae",
+      "name": "Extract the Related Post",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3280,
+        3152
+      ]
+    },
+    {
+      "parameters": {
+        "content": "",
+        "height": 1664,
+        "width": 3174,
+        "color": 6
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -912,
+        2368
+      ],
+      "typeVersion": 1,
+      "id": "69a26feb-1205-433b-9f29-656405fc2d6e",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "YOUR_GOOGLE_SHEET_ID",
+          "mode": "list"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": 705350307,
+          "mode": "list",
+          "cachedResultName": "Studio_Legale_YourFirm_Topics",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/YOUR_GOOGLE_SHEET_ID"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        10464,
+        7392
+      ],
+      "id": "a9ac8247-e89b-49ec-9016-ea5d0257aff6",
+      "name": "Get row(s) in sheet",
+      "executeOnce": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "YOUR_CREDENTIAL_ID",
+          "name": "YOUR_CREDENTIAL_NAME"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = $input.all();\nconst pending = rows.find(row => (row.json.Status || '').trim() === 'Pending');\nif (pending) {\n  return [{ json: { found: true, ...pending.json } }];\n}\nreturn [{ json: { found: false } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        10672,
+        7392
+      ],
+      "id": "e4def8db-d952-4ae8-b351-712dfd818e5b",
+      "name": "Find Pending"
+    },
+    {
+      "parameters": {
+        "content": "",
+        "height": 224,
+        "width": 688
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        10416,
+        7360
+      ],
+      "typeVersion": 1,
+      "id": "6772fb46-c321-4ed9-aab8-d22f3e218ca4",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "amount": 30
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        2624
+      ],
+      "id": "150b6d21-f1a3-4434-b8f3-c057ee96a373",
+      "name": "Wait",
+      "webhookId": "a2608baf-f935-41a8-93d6-6d3d98c7f93e"
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.status }}",
+                    "rightValue": "completed",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "dcb4def0-bd02-42b4-af4a-e2dda92e579b"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "437e8f26-3d32-47f3-acc9-3c0952680cf5",
+                    "leftValue": "={{ $json.status }}",
+                    "rightValue": "canceled",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "6cc70154-8664-473d-84a4-1e3cee0b2375",
+                    "leftValue": "={{ $json.status }}",
+                    "rightValue": "terminated",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "7aeacbe0-389e-4cbc-82a6-c70b042dca56",
+                    "leftValue": "={{ $json.status }}",
+                    "rightValue": "running",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        1728,
+        2592
+      ],
+      "id": "fc5eff53-0c6c-4c79-9b2f-530e9d4ce882",
+      "name": "Switch"
+    },
+    {
+      "parameters": {
+        "url": "={{ \"http://host.docker.internal:8000/v1/runs/\" + $('Skyvern3').first().json.workflow_run_id }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "YOUR_API_KEY_HERE"
+            }
+          ]
+        },
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "json"
+            }
+          }
+        }
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1440,
+        2624
+      ],
+      "id": "ea8be778-bd74-47a6-b4aa-62ec89665d52",
+      "name": "Skyvern Get Run"
+    },
+    {
+      "parameters": {
+        "jsCode": "const output = $input.first().json.output;\n\nreturn [\n  {\n    json: output\n  }\n];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2320,
+        2576
+      ],
+      "id": "b7ca68da-7473-4fcd-803a-7de85e76ce44",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "amount": 60
+      },
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2016,
+        2672
+      ],
+      "id": "796efee0-c3b1-4234-9eec-b111351a87eb",
+      "name": "Wait2",
+      "webhookId": "fc7541b7-9b93-4e46-9188-ef629bba3ee3"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        2912,
+        2944
+      ],
+      "id": "76d3e640-8ec7-48c4-9187-f1c25b628a3a",
+      "name": "Wait3",
+      "webhookId": "d5610e3e-d57a-40c0-ab3a-061845b910ff"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "OpenAI Article OK?": {
+      "main": [
+        [
+          {
+            "node": "Parse & Validate Article",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify Admin - OpenAI Failure1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse & Validate Article": {
+      "main": [
+        [
+          {
+            "node": "Article Language OK?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Article Language OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Process QA Review Result": {
+      "main": [
+        [
+          {
+            "node": "Humanization LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Append Disclaimer + Build Final Content": {
+      "main": [
+        [
+          {
+            "node": "Generate an image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Image Generated OK?": {
+      "main": [
+        [
+          {
+            "node": "WordPress - Upload Image",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Image ID - No Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WordPress - Upload Image": {
+      "main": [
+        [
+          {
+            "node": "Set Image ID - Success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set Image ID - No Image",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Image ID - Success": {
+      "main": [
+        [
+          {
+            "node": "Build WordPress Post Body1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Set Image ID - No Image": {
+      "main": [
+        [
+          {
+            "node": "Build WordPress Post Body1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Notify Admin - Image Missing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WordPress - Create Draft": {
+      "main": [
+        [
+          {
+            "node": "Draft Created OK?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Draft Created OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Draft Created OK?": {
+      "main": [
+        [
+          {
+            "node": "Extract Draft Details",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify Admin - WP Draft Failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Draft Details": {
+      "main": [
+        [
+          {
+            "node": "Sheets - Log Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sheets - Log Draft": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Best Legal Keyword1": {
+      "main": [
+        [
+          {
+            "node": "Workflow Config2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build WordPress Post Body1": {
+      "main": [
+        [
+          {
+            "node": "Wait1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Basic LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "OpenAI Article OK?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Edit Fields",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model1": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "OpenAI - AI Quality Review1",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI - AI Quality Review1": {
+      "main": [
+        [
+          {
+            "node": "Process QA Review Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate an image": {
+      "main": [
+        [
+          {
+            "node": "Image Generated OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Article Language OK?": {
+      "main": [
+        [
+          {
+            "node": "OpenAI - AI Quality Review1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notify Admin - Language Check Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model2": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Humanization LLM Chain",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Humanization LLM Chain": {
+      "main": [
+        [
+          {
+            "node": "Apply Humanized Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Humanized Content": {
+      "main": [
+        [
+          {
+            "node": "Identify English Words",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait1": {
+      "main": [
+        [
+          {
+            "node": "WordPress - Create Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Identify English Words": {
+      "main": [
+        [
+          {
+            "node": "AI English Fixer (Context-Aware)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "OpenAI Chat Model3": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI English Fixer (Context-Aware)",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI English Fixer (Context-Aware)": {
+      "main": [
+        [
+          {
+            "node": "Verify English Removed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Still English Found?": {
+      "main": [
+        [
+          {
+            "node": "Notify Admin - Language Check Failed1",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Append Disclaimer + Build Final Content",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Append Disclaimer + Build Final Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Verify English Removed": {
+      "main": [
+        [
+          {
+            "node": "Still English Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Workflow Config1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Workflow Config1": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet2": {
+      "main": [
+        [
+          {
+            "node": "Find Pending1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Pending1": {
+      "main": [
+        [
+          {
+            "node": "IF Pending Found?1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF Pending Found?1": {
+      "main": [
+        [
+          {
+            "node": "WordPress - Get Full Post History1",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Get row(s) in sheet3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet3": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript4",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript4": {
+      "main": [
+        [
+          {
+            "node": "Update row in sheet1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update row in sheet1": {
+      "main": [
+        [
+          {
+            "node": "Get row(s) in sheet2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WordPress - Get Full Post History1": {
+      "main": [
+        [
+          {
+            "node": "Extract Primary Keywords",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Primary Keywords": {
+      "main": [
+        [
+          {
+            "node": "Skyvern3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WordPress - Get Existing Posts1": {
+      "main": [
+        [
+          {
+            "node": "Extract the Related Post",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Extract the Related Post",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript5": {
+      "main": [
+        [
+          {
+            "node": "Basic LLM Chain",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait5": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Workflow Config2": {
+      "main": [
+        [
+          {
+            "node": "Wait3",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract the Related Post": {
+      "main": [
+        [
+          {
+            "node": "Wait5",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get row(s) in sheet": {
+      "main": [
+        [
+          {
+            "node": "Find Pending",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Pending": {
+      "main": [
+        [
+          {
+            "node": "Sheets - Log Used Keyword",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skyvern3": {
+      "main": [
+        [
+          {
+            "node": "Wait",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skyvern Get Run": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait": {
+      "main": [
+        [
+          {
+            "node": "Skyvern Get Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [],
+        [
+          {
+            "node": "Skyvern3",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Wait2",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Select Best Legal Keyword1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait2": {
+      "main": [
+        [
+          {
+            "node": "Skyvern Get Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Wait3": {
+      "main": [
+        [
+          {
+            "node": "WordPress - Get Existing Posts1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "7eca0ddb-8a0c-44f7-b37c-b2aabb24c98d",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "d77d3d21095591d1ccc1dcfaff8ba35fe7c11a46647f6cf6a9192ed243037f3f"
+  },
+  "nodeGroups": [],
+  "id": "IjyTbbGx5QObWGNj",
+  "tags": []
+}
